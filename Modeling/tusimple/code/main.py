@@ -6,6 +6,10 @@ from tests.test import *
 from trains.train import *
 from libs.prepare import *
 
+import torch
+
+print(torch.cuda.is_available())
+
 def main_eval(cfg, dict_DB):
     # eval option
     test_process = Test_Process(cfg, dict_DB)

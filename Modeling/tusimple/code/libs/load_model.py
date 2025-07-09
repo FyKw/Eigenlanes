@@ -4,7 +4,7 @@ from networks.loss import *
 
 def load_model_for_test(cfg, dict_DB):
     if cfg.run_mode == 'test_paper':
-        checkpoint = torch.load(cfg.dir['weight_paper'] + f'checkpoint_tusimple_res_{cfg.backbone}')
+        checkpoint = torch.load(cfg.dir['weight_paper'] + f'checkpoint_tusimple_res_{cfg.backbone}', weights_only=False)
     else:
         if cfg.param_name == 'trained_last':
             checkpoint = torch.load(cfg.dir['weight'] + 'checkpoint_final')

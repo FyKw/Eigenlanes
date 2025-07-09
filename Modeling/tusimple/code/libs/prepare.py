@@ -1,4 +1,5 @@
 from datasets.dataset_tusimple import *
+from numpy.f2py.auxfuncs import options
 from visualizes.visualize import *
 from tests.forward import *
 from post_processes.post_process import *
@@ -29,6 +30,7 @@ def prepare_dataloader(cfg, dict_DB):
     return dict_DB
 
 def prepare_model(cfg, dict_DB):
+    print(dict_DB)
     if 'test' in cfg.run_mode:
         dict_DB = load_model_for_test(cfg, dict_DB)
     if 'train' in cfg.run_mode:
