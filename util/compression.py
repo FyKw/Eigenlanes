@@ -13,14 +13,14 @@ class ModelPruner:
         """
         if not model_path or not isinstance(model_path, str):
             raise ValueError("model_path must be a valid string")
-            
+
         self.model_path = model_path
         self.save_dir = save_dir
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        
+
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Model file not found: {model_path}")
-            
+
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
 
@@ -124,6 +124,10 @@ class ModelPruner:
         Args:
             prune_ratios: List of pruning ratios to try
         """
+
+        # give me some meta
+        # print(f"making .md file with info about the model")
+        # collect_some_data(
         original_state_dict = self.load_model()
         original_size = self.get_model_size(original_state_dict)
 
@@ -142,7 +146,7 @@ class ModelPruner:
 
             print(f"Pruned model size: {pruned_size:.2f} MB")
             print(f"Sparsity: {sparsity:.2f}%")
-            
+
             # Avoid division by zero
             if original_size > 0:
                 size_reduction = (original_size - pruned_size) / original_size * 100
