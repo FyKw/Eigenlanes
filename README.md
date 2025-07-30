@@ -1,5 +1,8 @@
 ![Python 3.6](https://img.shields.io/badge/python-3.6-green.svg)
 
+https://pytorch.org/get-started/previous-versions/
+get 11.8
+
 (venv) PS C:\Users\fynnk\BA-on-win\Eigenlanes> cd .\Modeling\tusimple\code\
 (venv) PS C:\Users\fynnk\BA-on-win\Eigenlanes\Modeling\tusimple\code> python main.py --run_mode test_paper --pre_dir ../../../preprocessed/tusimple/ --dataset_dir  ..\..\..\datasets\tusimple\ --paper_weight_dir ..\..\..\pretrained\tusimple\
 
