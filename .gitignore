@@ -1,3 +1,5 @@
 /datasets/tusimple/
 /Modeling/tusimple/output/test/
+/preprocessed/culane/*
+/preprocessed/tusimple/*
 /. venv/
