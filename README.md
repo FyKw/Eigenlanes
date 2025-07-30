@@ -1,5 +1,8 @@
 ![Python 3.6](https://img.shields.io/badge/python-3.6-green.svg)
 
+(venv) PS C:\Users\fynnk\BA-on-win\Eigenlanes> cd .\Modeling\tusimple\code\
+(venv) PS C:\Users\fynnk\BA-on-win\Eigenlanes\Modeling\tusimple\code> python main.py --run_mode test_paper --pre_dir ../../../preprocessed/tusimple/ --dataset_dir  ..\..\..\datasets\tusimple\ --paper_weight_dir ..\..\..\pretrained\tusimple\
+
 # [CVPR 2022] Eigenlanes: Data-Driven Lane Descriptors for Structurally Diverse Lanes
 ### Dongkwon Jin, Wonhui Park, Seong-Gyun Jeong, Heeyeon Kwon, and Chang-Su Kim
 
