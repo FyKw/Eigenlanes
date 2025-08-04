@@ -1,4 +1,5 @@
 import torch
+import os
 from networks.model import Model
 from networks.loss import *
 
@@ -15,6 +16,30 @@ def load_model_for_test(cfg, dict_DB):
     model.cuda()
     dict_DB['model'] = model
     return dict_DB
+
+
+def load_model_for_pruning(cfg, dict_DB):
+    checkpoint_path = os.path.join(cfg.dir['weight_paper'], f'pruned_checkpoint_tusimple_res_{cfg.backbone}')
+
+    if not os.path.exists(checkpoint_path):
+        raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+
+    checkpoint = torch.load(checkpoint_path, map_location="cpu")
+
+    print(f"✅ Checkpoint loaded from: {checkpoint_path}")
+    print(f"🔑 Checkpoint type: {type(checkpoint)}")
+
+    model = Model(cfg=cfg)
+
+    # Since it's a raw state_dict, load it directly
+    model.load_state_dict(checkpoint, strict=False)
+
+    model.cuda()
+    model.eval()
+    dict_DB["model"] = model
+
+    return dict_DB
+
 
 def load_model_for_train(cfg, dict_DB):
     model = Model(cfg=cfg)

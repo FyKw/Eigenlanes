@@ -6,6 +6,7 @@ from tests.test import *
 from trains.train import *
 from libs.prepare import *
 from tools.prune_model import run_prune
+from libs.load_model import load_model_for_pruning
 
 import torch
 
@@ -25,9 +26,13 @@ def main_train(cfg, dict_DB):
     train_process = Train_Process(cfg, dict_DB)
     train_process.run()
 
+
 def main_prune(cfg, dict_DB):
     cfg.prune_ratio = 0.3
     cfg.datalist = "train_set"
+
+    dict_DB = load_model_for_pruning(cfg, dict_DB)
+
     run_prune(cfg, dict_DB)
 
 
