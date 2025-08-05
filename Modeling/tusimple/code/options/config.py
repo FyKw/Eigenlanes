@@ -27,7 +27,7 @@ class Config(object):
         self.setting_for_lane_detection()
 
     def setting_for_system(self):
-        self.gpu_id = "1"
+        self.gpu_id = "0"
         self.seed = 123
 
     def setting_for_path(self):
@@ -70,13 +70,13 @@ class Config(object):
         self.scale_factor = [8, 16, 32]
 
     def setting_for_dataloader(self):
-        self.num_workers = 4
+        self.num_workers = 8
         self.data_flip = True
 
         self.sampling = False
         self.sampling_step = 1
 
-        self.batch_size = {'img': 8}
+        self.batch_size = {'img': 16}
 
         self.gaussian_blur = True
         self.gaussian_blur_seg = True

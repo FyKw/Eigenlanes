@@ -164,7 +164,7 @@ class ModelPruner:
 if __name__ == "__main__":
     # Example usage
     # TODO This should not be a hard-coded path!
-    model_path = "C:/Users/fynnk/BA-on-win/Eigenlanes/pretrained/tusimple/checkpoint_tusimple_res_18"
+    model_path = "/pretrained/tusimple/pruned_checkpoint_tusimple_res_18"
     pruner = ModelPruner(model_path)
 
     # Try different pruning ratios

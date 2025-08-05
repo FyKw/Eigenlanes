@@ -3,7 +3,6 @@ import copy
 import torch
 import torch.nn.utils.prune as prune
 
-
 def count_size(state_dict):
     """Return model size in MB"""
     return sum(p.numel() for p in state_dict.values() if isinstance(p, torch.Tensor)) * 4 / (1024 ** 2)
@@ -19,21 +18,47 @@ def count_sparsity(state_dict):
     return 100.0 * zeros / total if total else 0.0
 
 
-def structured_prune(model, ratio):
+def structured_prune(model, global_ratio):
     """
-    Apply structured pruning (L2 norm) on Conv2d and Linear layers
+    Apply structured pruning (L2 norm) on Conv2d and Linear layers,
+    excluding critical layers and adjusting pruning strength by depth.
     """
 
     model = copy.deepcopy(model)
+
+    # Manual rules or patterns to control pruning
+    layers_to_skip = [
+        "encoder.conv1",               # first layer
+        "decoder.4",                   # final output
+        "classification", "regression", "w1", "w2"  # avoid prediction heads
+    ]
+
+    def should_skip(name):
+        return any(skip in name for skip in layers_to_skip)
+
+    def get_layer_ratio(name):
+        # Custom logic per layer
+        if "layer1" in name: return 0.4
+        if "layer2" in name: return 0.4
+        if "layer3" in name: return 0.4
+        if "layer4" in name: return 0.4
+        return global_ratio
+
     for name, module in model.named_modules():
-        if isinstance(module, (torch.nn.Conv2d, torch.nn.Linear)):
+        if isinstance(module, (torch.nn.Conv2d, torch.nn.Linear)) and not should_skip(name):
             try:
-                prune.ln_structured(module, name="weight", amount=ratio, n=2, dim=0)
-                prune.remove(module, "weight")  # Make pruning permanent
-                print(f"✅ Pruned: {name}")
+                amount = get_layer_ratio(name)
+                prune.ln_structured(module, name="weight", amount=amount, n=2, dim=0)
+                prune.remove(module, "weight")
+                print(f"✅ Pruned: {name} with {amount * 100:.0f}%")
             except Exception as e:
                 print(f"⚠️ Skipped {name}: {e}")
+        else:
+            if isinstance(module, (torch.nn.Conv2d, torch.nn.Linear)):
+                print(f"⏩ Skipped: {name} (sensitive layer)")
+
     return model
+
 
 
 def run_prune(cfg, dict_DB):
@@ -60,7 +85,13 @@ def run_prune(cfg, dict_DB):
 
     out_dir = os.path.join(cfg.dir["weight"], "pruned")
     os.makedirs(out_dir, exist_ok=True)
-    out_path = os.path.join(out_dir, f"pruned_r{cfg.prune_ratio:.2f}.pth")
-    torch.save({"model": pruned_state}, out_path)
+    out_path = os.path.join(out_dir, f"pruned_r{cfg.prune_ratio:.3f}")
+    torch.save({
+        "model": pruned_model.state_dict(),
+        "epoch": 0,
+        "val_result": 0.0,
+        "optimizer": torch.optim.Adam(pruned_model.parameters()).state_dict(),  # dummy optimizer
+    }, out_path)
+
     print(f"✅ Saved pruned model to: {out_path}")
 

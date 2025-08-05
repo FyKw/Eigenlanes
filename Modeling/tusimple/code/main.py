@@ -7,11 +7,7 @@ from trains.train import *
 from libs.prepare import *
 from tools.prune_model import run_prune
 from libs.load_model import load_model_for_pruning
-
 import torch
-
-print(torch.cuda.is_available())
-
 
 def main_eval(cfg, dict_DB):
     test_process = Test_Process(cfg, dict_DB)
@@ -28,7 +24,7 @@ def main_train(cfg, dict_DB):
 
 
 def main_prune(cfg, dict_DB):
-    cfg.prune_ratio = 0.3
+    cfg.prune_ratio = 0.4
     cfg.datalist = "train_set"
 
     dict_DB = load_model_for_pruning(cfg, dict_DB)
@@ -52,6 +48,13 @@ def main():
     dict_DB = prepare_generator(cfg, dict_DB)
     dict_DB = prepare_training(cfg, dict_DB)
 
+    print("Default CUDA device:", torch.cuda.current_device() if torch.cuda.is_available() else "N/A")
+
+
+    if "model" in dict_DB:
+        model = dict_DB["model"]
+        print("Model is on device:", next(model.parameters()).device)
+
     if 'prune' in cfg.run_mode:
         main_prune(cfg, dict_DB)
     if 'test' in cfg.run_mode:
@@ -63,4 +66,5 @@ def main():
 
 
 if __name__ == '__main__':
+    print("is CUDA Available:" + str(torch.cuda.is_available()))
     main()

@@ -1,5 +1,8 @@
 import numpy as np
 from libs.utils import *
+import time
+import torch
+import torch.autograd.profiler as profiler
 
 class Test_Process(object):
     def __init__(self, cfg, dict_DB):
@@ -15,14 +18,22 @@ class Test_Process(object):
         self.datalist = []
 
     def run(self, model, mode='val'):
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model = model.to(device)
         self.init_data()
+        start = time.time()
 
         with torch.no_grad():
+
             model.eval()
 
             for i, self.batch in enumerate(self.testloader):  # load batch data
-                self.batch['img'] = self.batch['img'].cuda()
-                self.batch['seg_label'] = self.batch['seg_label'].cuda()
+                self.batch['img'] = self.batch['img'].to(device)
+                self.batch['seg_label'] = self.batch['seg_label'].to(device)
+
+                # print("🔍 Model device:", next(model.parameters()).device)
+                # print("🔍 Input device:", self.batch['img'].device)
+
                 img_name = self.batch['img_name'][0]
 
                 out = dict()
@@ -62,6 +73,9 @@ class Test_Process(object):
             save_pickle(dir_name=self.cfg.dir['out'] + mode + '/pickle/', file_name='datalist', data=self.datalist)
 
         # evaluation
+        end = time.time()
+        process_time = end - start
+        print('process time: {:.3f}s'.format(process_time))
         return self.evaluation(mode)
 
     def evaluation(self, mode):
