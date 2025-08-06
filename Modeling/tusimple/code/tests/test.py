@@ -21,11 +21,13 @@ class Test_Process(object):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model = model.to(device)
         self.init_data()
-        start = time.time()
+
 
         with torch.no_grad():
 
             model.eval()
+            torch.cuda.synchronize()
+            start = time.time()
 
             for i, self.batch in enumerate(self.testloader):  # load batch data
                 self.batch['img'] = self.batch['img'].to(device)
@@ -73,9 +75,9 @@ class Test_Process(object):
             save_pickle(dir_name=self.cfg.dir['out'] + mode + '/pickle/', file_name='datalist', data=self.datalist)
 
         # evaluation
-        end = time.time()
-        process_time = end - start
-        print('process time: {:.3f}s'.format(process_time))
+        torch.cuda.synchronize()
+        process_time = time.time() - start
+        print('Inference time: {:.3f}s'.format(process_time))
         return self.evaluation(mode)
 
     def evaluation(self, mode):

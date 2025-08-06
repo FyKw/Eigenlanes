@@ -5,7 +5,7 @@ from options.args import *
 from tests.test import *
 from trains.train import *
 from libs.prepare import *
-from tools.prune_model import run_prune
+from tools.prune_model import run_prune, count_sparsity
 from libs.load_model import load_model_for_pruning
 import torch
 
@@ -15,6 +15,7 @@ def main_eval(cfg, dict_DB):
 
 def main_test(cfg, dict_DB):
     test_process = Test_Process(cfg, dict_DB)
+    print(f"Running test on model with sparsity: {count_sparsity(dict_DB['model'].state_dict()):.2f}%")
     test_process.run(dict_DB['model'], mode='test')
 
 def main_train(cfg, dict_DB):
@@ -24,13 +25,10 @@ def main_train(cfg, dict_DB):
 
 
 def main_prune(cfg, dict_DB):
-    cfg.prune_ratio = 0.4
-    cfg.datalist = "train_set"
-
+    prune_ratio = 0.05
     dict_DB = load_model_for_pruning(cfg, dict_DB)
 
-    run_prune(cfg, dict_DB)
-
+    run_prune(cfg, dict_DB, prune_ratio)
 
 def main():
     cfg = Config()

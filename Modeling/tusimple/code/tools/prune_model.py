@@ -38,10 +38,10 @@ def structured_prune(model, global_ratio):
 
     def get_layer_ratio(name):
         # Custom logic per layer
-        if "layer1" in name: return 0.4
-        if "layer2" in name: return 0.4
-        if "layer3" in name: return 0.4
-        if "layer4" in name: return 0.4
+        if "layer1" in name: return 0.05
+        if "layer2" in name: return 0.05
+        if "layer3" in name: return 0.05
+        if "layer4" in name: return 0.05
         return global_ratio
 
     for name, module in model.named_modules():
@@ -61,21 +61,24 @@ def structured_prune(model, global_ratio):
 
 
 
-def run_prune(cfg, dict_DB):
+def run_prune(cfg, dict_DB, prune_ratio):
     print("\n🔧 Running structured pruning...")
 
     model = dict_DB.get("model", None)
     if model is None:
         raise RuntimeError("❌ Model not loaded into dict_DB. Make sure `load_model_for_pruning()` was called.")
 
-    model = model.cpu().eval()
+    model = model.eval()
     state_dict = model.state_dict()
+
+    original_state = state_dict
 
     original_size = count_size(state_dict)
     original_sparsity = count_sparsity(state_dict)
     print(f"🔎 Original: {original_size:.2f} MB, {original_sparsity:.2f}% sparsity")
 
-    pruned_model = structured_prune(model, cfg.prune_ratio)
+    pruned_model = structured_prune(model, prune_ratio)
+
     pruned_state = pruned_model.state_dict()
 
     pruned_size = count_size(pruned_state)
@@ -85,13 +88,22 @@ def run_prune(cfg, dict_DB):
 
     out_dir = os.path.join(cfg.dir["weight"], "pruned")
     os.makedirs(out_dir, exist_ok=True)
-    out_path = os.path.join(out_dir, f"pruned_r{cfg.prune_ratio:.3f}")
+    out_path = os.path.join(out_dir, f"checkpoint_max_acc_tusimple_res_{cfg.backbone}")
     torch.save({
         "model": pruned_model.state_dict(),
-        "epoch": 0,
+        "epoch": 300,
         "val_result": 0.0,
-        "optimizer": torch.optim.Adam(pruned_model.parameters()).state_dict(),  # dummy optimizer
+        "optimizer": torch.optim.Adam(pruned_model.parameters()).state_dict(),
     }, out_path)
 
-    print(f"✅ Saved pruned model to: {out_path}")
+    # print(f"✅ Saved pruned model to: {out_path}")
+    # print("=========original keys============")
+    # for key in original_state.keys():
+    #     print(key + "\n")
+    # print("=========pruned keys============")
+    # for key in pruned_state.keys():
+    #     print(key + "\n")
+
+    for key in original_state.keys():
+        assert torch.equal(original_state[key], pruned_state[key]), f"{key} has changed during 0% pruning."
 

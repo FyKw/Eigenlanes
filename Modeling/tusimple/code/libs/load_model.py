@@ -10,7 +10,7 @@ def load_model_for_test(cfg, dict_DB):
         if cfg.param_name == 'trained_last':
             checkpoint = torch.load(cfg.dir['weight'] + 'checkpoint_final')
         elif cfg.param_name == 'max':
-            checkpoint = torch.load(cfg.dir['weight'] + f'checkpoint_max_acc_tusimple_res_{cfg.backbone}')
+            checkpoint = torch.load(cfg.dir['weight'] + f'checkpoint_max_acc_tusimple_res_{cfg.backbone}', weights_only=False)
     model = Model(cfg=cfg)
     model.load_state_dict(checkpoint['model'], strict=False)
     model = model.cuda()
@@ -19,12 +19,12 @@ def load_model_for_test(cfg, dict_DB):
 
 
 def load_model_for_pruning(cfg, dict_DB):
-    checkpoint_path = os.path.join(cfg.dir['weight_paper'], f'checkpoint_tusimple_res_{cfg.backbone}')
+    checkpoint_path = os.path.join(cfg.dir['weight'], f'checkpoint_tusimple_res_{cfg.backbone}')
 
     if not os.path.exists(checkpoint_path):
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
-    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    checkpoint = torch.load(checkpoint_path, weights_only=False)
 
     print(f"✅ Checkpoint loaded from: {checkpoint_path}")
     print(f"🔑 Checkpoint type: {type(checkpoint)}")
@@ -32,7 +32,7 @@ def load_model_for_pruning(cfg, dict_DB):
     model = Model(cfg=cfg)
 
     # Since it's a raw state_dict, load it directly
-    model.load_state_dict(checkpoint, strict=False)
+    model.load_state_dict(checkpoint['model'], strict=False)
 
     model.cuda()
     model.eval()
@@ -53,7 +53,7 @@ def load_model_for_train(cfg, dict_DB):
                                                      gamma=cfg.gamma)
 
     if cfg.resume == False:
-        checkpoint = torch.load(cfg.dir['weight'] + 'checkpoint_final')
+        checkpoint = torch.load(cfg.dir['weight'] + 'checkpoint_final', weights_only=False)
         model.load_state_dict(checkpoint['model'], strict=False)
         optimizer.load_state_dict(checkpoint['optimizer'])
         scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer=optimizer,
