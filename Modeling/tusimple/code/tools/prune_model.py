@@ -38,10 +38,10 @@ def structured_prune(model, global_ratio):
 
     def get_layer_ratio(name):
         # Custom logic per layer
-        if "layer1" in name: return 0.05
-        if "layer2" in name: return 0.05
-        if "layer3" in name: return 0.05
-        if "layer4" in name: return 0.05
+        if "layer1" in name: return global_ratio
+        if "layer2" in name: return global_ratio
+        if "layer3" in name: return global_ratio
+        if "layer4" in name: return global_ratio
         return global_ratio
 
     for name, module in model.named_modules():
@@ -88,7 +88,8 @@ def run_prune(cfg, dict_DB, prune_ratio):
 
     out_dir = os.path.join(cfg.dir["weight"], "pruned")
     os.makedirs(out_dir, exist_ok=True)
-    out_path = os.path.join(out_dir, f"checkpoint_max_acc_tusimple_res_{cfg.backbone}")
+    prune_str = f"{int(prune_ratio * 100)}"
+    out_path = os.path.join(out_dir, f"checkpoint_tusimple_res_{cfg.backbone}_pruned{prune_str}")
     torch.save({
         "model": pruned_model.state_dict(),
         "epoch": 300,
@@ -103,7 +104,7 @@ def run_prune(cfg, dict_DB, prune_ratio):
     # print("=========pruned keys============")
     # for key in pruned_state.keys():
     #     print(key + "\n")
-
-    for key in original_state.keys():
-        assert torch.equal(original_state[key], pruned_state[key]), f"{key} has changed during 0% pruning."
+    #
+    # for key in original_state.keys():
+    #     assert torch.equal(original_state[key], pruned_state[key]), f"{key} has changed during 0% pruning."
 

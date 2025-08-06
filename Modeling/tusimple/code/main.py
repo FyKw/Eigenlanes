@@ -30,6 +30,21 @@ def main_prune(cfg, dict_DB):
 
     run_prune(cfg, dict_DB, prune_ratio)
 
+def long_run(cfg, dict_DB):
+    steps = [i * 0.05 for i in range(20)]
+
+    dict_DB = load_model_for_pruning(cfg, dict_DB)
+    for prune_ratio in steps:
+        run_prune(cfg, dict_DB, prune_ratio)
+
+
+def multitest(cfg, dict_DB):
+    for file in os.listdir(cfg.dir['weight/pruned']):
+        cfg.param_name = 'multi'
+        cfg.dir['current'] = file
+        main_test(cfg, dict_DB)
+
+
 def main():
     cfg = Config()
     cfg = parse_args(cfg)
@@ -55,6 +70,10 @@ def main():
 
     if 'prune' in cfg.run_mode:
         main_prune(cfg, dict_DB)
+    if 'long_run' in cfg.run_mode:
+        long_run(cfg, dict_DB)
+    if 'multi' in cfg.run_mode:
+        multitest(cfg, dict_DB)
     if 'test' in cfg.run_mode:
         main_test(cfg, dict_DB)
     if 'train' in cfg.run_mode:

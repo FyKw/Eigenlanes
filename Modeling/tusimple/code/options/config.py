@@ -162,4 +162,4 @@ class Config(object):
         self.thresd_label_adj_iou = 0.55
 
     def setting_for_evaluation(self):
-        self.param_name = 'max'  # ['trained_last', 'max']
+        self.param_name = 'multi'  # ['trained_last', 'max']

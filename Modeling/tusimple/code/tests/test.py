@@ -68,7 +68,7 @@ class Test_Process(object):
                     dir_name, file_name = os.path.split(img_name)
                     save_pickle(dir_name=os.path.join(self.cfg.dir['out'] + '{}/pickle/{}/'.format(mode, dir_name)), file_name=file_name.replace('.jpg', ''), data=self.result)
 
-                if i % 50 == 1:
+                if i % 1000 == 1:
                     print('image {} ---> {} done!'.format(i, img_name))
 
         if self.cfg.save_pickle == True:
