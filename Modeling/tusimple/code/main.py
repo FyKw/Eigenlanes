@@ -8,6 +8,7 @@ from libs.prepare import *
 from tools.prune_model import run_prune, count_sparsity
 from libs.load_model import load_model_for_pruning, load_model_for_test
 import torch
+from itertools import product
 
 def main_eval(cfg, dict_DB):
     test_process = Test_Process(cfg, dict_DB)
@@ -40,7 +41,7 @@ def long_run(cfg, dict_DB):
 
 def multi(cfg, dict_DB):
     pruned_dir = os.path.join(cfg.dir['weight'], 'pruned')
-    model_files = [file for file in os.listdir(pruned_dir) if file.startswith('checkpoint_tusimple_res_18')]
+    model_files = [file for file in os.listdir(pruned_dir) if file.startswith('checkpoint_tusimple')]
 
     for i, file in enumerate(model_files, start=1):
         print(f"Processing model {i}/{len(model_files)}: {file}")
@@ -49,6 +50,9 @@ def multi(cfg, dict_DB):
 
         dict_DB = load_model_for_test(cfg, dict_DB)
 
+        # Extract config string from filename (e.g., "_enc10_dec5_cls5_reg0.pt")
+        prune_config_str = file.replace("checkpoint_tusimple_res_18_pruned_", "")
+
         # Initialize Test_Process
         test_process = Test_Process(cfg, dict_DB)
 
@@ -56,9 +60,25 @@ def multi(cfg, dict_DB):
         sparsity = count_sparsity(dict_DB['model'].state_dict())
         print(f"Running test on model '{file}' with sparsity: {sparsity:.2f}%")
 
-        # Run the test
-        test_process.run(dict_DB['model'], mode='test')
+        # Run the test with config string
+        test_process.run(dict_DB['model'], mode='test', prune_config_str=prune_config_str)
 
+
+def run_group_grid_prune(cfg, dict_DB):
+    ratios = [0, 0.05, 0.1, 0.15, 0.2]
+
+    ratio_options = {
+        "encoder": ratios,
+        "decoder": ratios
+    }
+    keys = list(ratio_options.keys())
+    value_combinations = list(product(*[ratio_options[k] for k in keys]))
+    dict_DB = load_model_for_pruning(cfg, dict_DB)
+    for combo in value_combinations:
+        group_ratios = dict(zip(keys, combo))
+        suffix = "_".join([f"{k[:4]}{int(v * 100)}" for k, v in group_ratios.items()])
+        print(f"\n🔍 Testing config: {group_ratios}")
+        run_prune(cfg, dict_DB, group_ratios, suffix=suffix)
 
 def main():
     cfg = Config()
@@ -95,6 +115,9 @@ def main():
         main_train(cfg, dict_DB)
     if 'eval' in cfg.run_mode:
         main_eval(cfg, dict_DB)
+    if 'grid' in cfg.run_mode:
+        run_group_grid_prune(cfg, dict_DB)
+
 
 
 if __name__ == '__main__':
