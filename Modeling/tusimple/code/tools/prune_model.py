@@ -3,6 +3,7 @@ import copy
 import torch
 import torch.nn.utils.prune as prune
 
+
 def count_size(state_dict):
     """Return model size in MB"""
     return sum(p.numel() for p in state_dict.values() if isinstance(p, torch.Tensor)) * 4 / (1024 ** 2)

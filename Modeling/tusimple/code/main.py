@@ -6,7 +6,7 @@ from tests.test import *
 from trains.train import *
 from libs.prepare import *
 from tools.prune_model import run_prune, count_sparsity
-from libs.load_model import load_model_for_pruning
+from libs.load_model import load_model_for_pruning, load_model_for_test
 import torch
 
 def main_eval(cfg, dict_DB):
@@ -38,11 +38,26 @@ def long_run(cfg, dict_DB):
         run_prune(cfg, dict_DB, prune_ratio)
 
 
-def multitest(cfg, dict_DB):
-    for file in os.listdir(cfg.dir['weight/pruned']):
-        cfg.param_name = 'multi'
+def multi(cfg, dict_DB):
+    pruned_dir = os.path.join(cfg.dir['weight'], 'pruned')
+    model_files = [file for file in os.listdir(pruned_dir) if file.startswith('checkpoint_tusimple_res_18')]
+
+    for i, file in enumerate(model_files, start=1):
+        print(f"Processing model {i}/{len(model_files)}: {file}")
+
         cfg.dir['current'] = file
-        main_test(cfg, dict_DB)
+
+        dict_DB = load_model_for_test(cfg, dict_DB)
+
+        # Initialize Test_Process
+        test_process = Test_Process(cfg, dict_DB)
+
+        # Print sparsity
+        sparsity = count_sparsity(dict_DB['model'].state_dict())
+        print(f"Running test on model '{file}' with sparsity: {sparsity:.2f}%")
+
+        # Run the test
+        test_process.run(dict_DB['model'], mode='test')
 
 
 def main():
@@ -73,7 +88,7 @@ def main():
     if 'long_run' in cfg.run_mode:
         long_run(cfg, dict_DB)
     if 'multi' in cfg.run_mode:
-        multitest(cfg, dict_DB)
+        multi(cfg, dict_DB)
     if 'test' in cfg.run_mode:
         main_test(cfg, dict_DB)
     if 'train' in cfg.run_mode:
