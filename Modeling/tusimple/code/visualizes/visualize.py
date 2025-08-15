@@ -197,45 +197,124 @@ class Visualize_cv(object):
                                  list=['img', 'node_set', 'neg_edge', 'gt'])
 
     def display_for_test(self, batch, out, batch_idx, mode):
-        px_coord = dict()
-        namelist = ['out_nms',
-                    'out_nms_reg',
-                    'out_mwcs_reg',
-                    'out_mwcs_reg_gt',
-                    'out_mwcs_reg_h_gt']
-        # update
+        import numpy as np
+        import torch
+
+        def _to_numpy(x):
+            if x is None: return None
+            if isinstance(x, torch.Tensor):
+                return x.detach().cpu().numpy()
+            return x
+
+        # names to draw and their source keys in `out`
+        name_to_outkey = {
+            'out_nms': 'nms',
+            'out_nms_reg': 'nms_reg',
+            'out_mwcs_reg': 'mwcs_reg',
+            'out_mwcs_reg_gt': 'mwcs_reg',  # GT overlays reuse same coords
+            'out_mwcs_reg_h_gt': 'mwcs_reg',  # … ditto, but uses height idx
+        }
+        namelist = list(name_to_outkey.keys())
+
+        # --- update base tiles (image + label + name) ---
         self.update_image(batch['img'][0], name='img')
         self.update_label(batch['org_label'][0], name='org_label')
         self.update_image_name(batch['img_name'][0])
 
-        # seg
-        self.show['seg_map'] = self.b_map_to_rgb_image(out['seg_map'][0])
+        # --- seg map is optional ---
+        seg = out.get('seg_map', None)
+        if seg is not None:
+            # expects CHW tensor in [0,1] or logits; adapt if needed
+            self.show['seg_map'] = self.b_map_to_rgb_image(seg[0])
+        else:
+            # create a placeholder so the grid saver still works
+            self.show['seg_map'] = np.zeros_like(self.show['img'])
 
-        # 2D coordinates
-        py_coord = np.float32(self.cfg.py_coord)
-        px_coord['out_nms'] = out['nms']
-        px_coord['out_nms_reg'] = out['nms_reg']
-        px_coord['out_mwcs_reg'] = out['mwcs_reg']
-        px_coord['out_mwcs_reg_gt'] = out['mwcs_reg']
-        px_coord['out_mwcs_reg_h_gt'] = out['mwcs_reg']
+        # --- gather 2D coordinates safely ---
+        px_coord = {}
+        py_coord = np.float32(self.cfg.py_coord)  # (Hc,) vector
 
+        for name, out_key in name_to_outkey.items():
+            src = out.get(out_key, None)
+            if src is None:
+                # one-time warn per missing key
+                warn_flag = f"_warn_missing_{out_key}"
+                if not hasattr(self, warn_flag):
+                    print(f"⚠️ visualize: '{out_key}' not in out — skipping {name}.")
+                    setattr(self, warn_flag, True)
+                continue
+
+            src_np = _to_numpy(src)
+            # normalize shapes: expect a list/array of lane polylines per candidate
+            # typical shape: [num_lanes, Hc] or list of arrays with length Hc
+            if isinstance(src_np, list):
+                px_coord[name] = [np.asarray(a) for a in src_np]
+            else:
+                # assume shape (L, Hc) or (Hc,)
+                arr = np.asarray(src_np)
+                if arr.ndim == 1:
+                    arr = arr[None, :]
+                px_coord[name] = [arr[i] for i in range(arr.shape[0])]
+
+        # --- draw each pane ---
         for name in namelist:
+            # skip panes whose source was missing
+            if name not in px_coord:
+                continue
+
+            # choose background
             if 'gt' in name:
                 self.show[name] = np.copy(self.show['org_label'])
             else:
                 self.show[name] = np.copy(self.show['img'])
-            for i in range(len(px_coord[name])):
-                if '_h' in name:
-                    idx = out['mwcs_height_idx'][i]
+
+            lanes = px_coord[name]
+            if lanes is None or len(lanes) == 0:
+                continue
+
+            # choose height index per lane if requested
+            h_idx_all = out.get('mwcs_height_idx', None)
+            h_idx_all = _to_numpy(h_idx_all) if h_idx_all is not None else None
+
+            for i, lane_x in enumerate(lanes):
+                # lane_x expected shape (Hc,)
+                lane_x = np.asarray(lane_x).reshape(-1)
+                Hc = len(py_coord)
+                if lane_x.shape[0] != Hc:
+                    # align lengths if mismatch
+                    m = min(Hc, lane_x.shape[0])
+                    lane_x = lane_x[:m]
+                    y = py_coord[:m]
+                else:
+                    y = py_coord
+
+                # pick start index
+                if '_h' in name and h_idx_all is not None and i < len(h_idx_all):
+                    idx = int(h_idx_all[i])
+                    if idx < 0: idx = 0
+                    if idx >= len(y): idx = 0
                 else:
                     idx = 0
-                node_pts = np.concatenate((px_coord[name][i][idx:].reshape(-1, 1), py_coord[idx:].reshape(-1, 1)), axis=1)
-                self.draw_polyline_cv(data=node_pts, name=name, ref_name=name, color=(0, 255, 0), s=3)
 
-        # save result
-        self.display_imglist(dir_name=self.cfg.dir['out'] + mode + '/display/',
-                             file_name=str(batch_idx) + '.jpg',
-                             list=['img'] + namelist + ['seg_map'])
+                node_pts = np.concatenate(
+                    (lane_x[idx:].reshape(-1, 1), y[idx:].reshape(-1, 1)),
+                    axis=1
+                )
+                # draw
+                self.draw_polyline_cv(
+                    data=node_pts,
+                    name=name,
+                    ref_name=name,
+                    color=(0, 255, 0),
+                    s=3
+                )
+
+        # --- save grid ---
+        self.display_imglist(
+            dir_name=self.cfg.dir['out'] + mode + '/display/',
+            file_name=str(batch_idx) + '.jpg',
+            list=['img'] + [n for n in namelist if n in self.show] + ['seg_map']
+        )
 
     def run_for_c_to_x_coord_conversion(self, idx, offset=None):
         if idx.shape[0] != 0:

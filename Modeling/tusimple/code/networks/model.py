@@ -151,28 +151,57 @@ class Model(nn.Module):
             nn.ReLU(inplace=True),
             nn.Conv1d(self.c_feat2 * 3, self.c_feat2 * 3, kernel_size=1, bias=False))
 
+    def reload_candidates_from_cfg(self):
+        """Recreate cand_* tensors from *current* self.cfg, like in __init__."""
+        cfg = self.cfg
+        self.sf = cfg.scale_factor  # refresh scale factors
+
+        # reload
+        candidates = load_pickle(cfg.dir['pre3'] + 'lane_candidates_' + str(cfg.n_clusters))
+        self.cand_c = to_tensor(candidates['c'])
+
+        self.cand_mask = load_pickle(cfg.dir['pre3'] + 'candidate_mask_' + str(cfg.n_clusters))
+        self.cand_iou = load_pickle(cfg.dir['pre3'] + 'candidate_iou_map_' + str(cfg.n_clusters))
+        self.cand_iou_upper = load_pickle(cfg.dir['pre3'] + 'candidate_iou_upper_map_' + str(cfg.n_clusters))
+
+        self.cand_iou = to_tensor(self.cand_iou)
+        self.cand_iou_upper = to_tensor(self.cand_iou_upper)
+
+        # rebuild mask/area for current primary scale
+        self.cand_area = dict()
+        sf0 = cfg.scale_factor[0]
+        self.cand_mask[sf0], self.cand_area[sf0] = self.get_lane_mask_area(self.cand_mask[sf0])
+        self.n_cand = self.cand_mask[sf0].shape[2]
+
     def get_lane_mask_area(self, mask):
         n, h, w = mask.shape
-        area = torch.zeros(n, dtype=torch.float32).cuda()
+        area = torch.zeros(n, dtype=torch.float32, device=mask.device)
         for i in range(n):
             area[i] = mask[i].nonzero().shape[0]
-
         return mask.view(1, 1, n, h, w), area
 
     def lane_pooling(self, feat_map, idx, sf):
+        device = feat_map.device
         b, c, h, w = feat_map.shape
         _, n = idx.shape
 
-        mask = self.cand_mask[sf][:, :, idx].view(b, 1, n, h, w)
-        area = self.cand_area[sf][idx].view(b, 1, n, 1, 1)
+        mask = self.cand_mask[sf].to(device)
+        area = self.cand_area[sf].to(device)
+
+        mask = mask[:, :, idx].view(b, 1, n, h, w)
+        area = area[idx].view(b, 1, n, 1, 1)
 
         line_feat = torch.sum(mask * feat_map.view(b, c, 1, h, w), dim=(3, 4), keepdim=True) / area
         return line_feat[:, :, :, 0, 0]
 
     def extract_lane_feat(self, feat_map, sf):
+        device = feat_map.device
         b, c, h, w = feat_map.shape
-        line_feat = torch.sum(self.cand_mask[sf][:, :, :] * feat_map.view(b, c, 1, h, w), dim=(3, 4)) / self.cand_area[sf][:].view(1, 1, -1)
 
+        mask = self.cand_mask[sf].to(device)
+        area = self.cand_area[sf].to(device)
+
+        line_feat = torch.sum(mask * feat_map.view(b, c, 1, h, w), dim=(3, 4)) / area.view(1, 1, -1)
         return line_feat
 
     def selection_and_removal(self, prob, batch_idx):
@@ -248,7 +277,22 @@ class Model(nn.Module):
 
         return corr
 
+    # add to Model
+    def move_aux_to(self, device):
+        if isinstance(self.cand_c, torch.Tensor): self.cand_c = self.cand_c.to(device)
+        if isinstance(self.cand_iou, torch.Tensor): self.cand_iou = self.cand_iou.to(device)
+        if isinstance(self.cand_iou_upper, torch.Tensor): self.cand_iou_upper = self.cand_iou_upper.to(device)
+        for k in list(self.cand_mask.keys()):
+            t = self.cand_mask[k]
+            if isinstance(t, torch.Tensor): self.cand_mask[k] = t.to(device)
+        for k in list(self.cand_area.keys()):
+            t = self.cand_area[k]
+            if isinstance(t, torch.Tensor): self.cand_area[k] = t.to(device)
+
 def l2_normalization(x):
     ep = 1e-6
     out = x / (torch.norm(x, p=2, dim=1, keepdim=True) + ep)
     return out
+
+
+
