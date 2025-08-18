@@ -65,15 +65,21 @@ def multi(cfg, dict_DB):
 
 
 def run_group_grid_prune(cfg, dict_DB):
-    ratios = [0, 0.05, 0.1, 0.15, 0.2]
+    # small, illustrative grid (expand if you want)
+    ratios = [0.0, 0.2, 0.3, 0.4]
 
     ratio_options = {
         "encoder": ratios,
-        "decoder": ratios
+        "decoder": ratios,
+        "squeeze": ratios,
+ #       "heads":   ratios,
     }
+
     keys = list(ratio_options.keys())
     value_combinations = list(product(*[ratio_options[k] for k in keys]))
+
     dict_DB = load_model_for_pruning(cfg, dict_DB)
+
     for combo in value_combinations:
         group_ratios = dict(zip(keys, combo))
         suffix = "_".join([f"{k[:4]}{int(v * 100)}" for k, v in group_ratios.items()])
