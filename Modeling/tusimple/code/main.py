@@ -6,9 +6,11 @@ from tests.test import *
 from trains.train import *
 from libs.prepare import *
 from tools.prune_model import run_prune, count_sparsity
-from libs.load_model import load_model_for_pruning, load_model_for_test
+from libs.load_model import load_model_for_pruning, load_model_for_test, load_model_for_quant
+from tools.quant import *
 import torch
 from itertools import product
+
 
 def main_eval(cfg, dict_DB):
     test_process = Test_Process(cfg, dict_DB)
@@ -31,6 +33,23 @@ def main_prune(cfg, dict_DB):
 
     run_prune(cfg, dict_DB, prune_ratio)
 
+def quant_info(cfg, dict_DB):
+    dict_DB = load_model_for_quant(cfg, dict_DB)
+    model = dict_DB.get("model", None)
+    summarize_dtypes(model)
+    weight_stats(model)
+
+def quant_fp_and_bf(cfg, dict_DB):
+    dict_DB = load_model_for_quant(cfg, dict_DB)
+    base = dict_DB.get("model", None)
+
+    fp16_m = to_half_inference(base)
+    save_quant_variant(cfg, fp16_m, "fp16")
+
+    bf16_m = to_bf16_inference(base)
+    save_quant_variant(cfg, bf16_m, "bf16")
+
+
 def long_run(cfg, dict_DB):
     steps = [i * 0.05 for i in range(20)]
 
@@ -38,8 +57,27 @@ def long_run(cfg, dict_DB):
     for prune_ratio in steps:
         run_prune(cfg, dict_DB, prune_ratio)
 
+def multi_quant(cfg, dict_DB):
+    quant_dir =  os.path.join(cfg.dir['weight'], 'quant')
+    model_files = [file for file in os.listdir(quant_dir) if file.startswith('checkpoint_tusimple')]
 
-def multi(cfg, dict_DB):
+    for i, file in enumerate(model_files, start=1):
+        print(f"Processing model {i}/{len(model_files)}: {file}")
+
+        cfg.dir['current'] = file
+
+        dict_DB = load_model_for_test(cfg, dict_DB)
+
+        # Extract config string from filename (e.g., "_enc10_dec5_cls5_reg0.pt")
+        prune_config_str = file.replace("checkpoint_tusimple_res_18_quant_", "")
+
+        # Initialize Test_Process
+        test_process = Test_Process(cfg, dict_DB)
+
+        # Run the test with config string
+        test_process.run(dict_DB['model'], mode='test', prune_config_str=prune_config_str)
+
+def multi_pruned(cfg, dict_DB):
     pruned_dir = os.path.join(cfg.dir['weight'], 'pruned')
     model_files = [file for file in os.listdir(pruned_dir) if file.startswith('checkpoint_tusimple')]
 
@@ -86,6 +124,7 @@ def run_group_grid_prune(cfg, dict_DB):
         print(f"\n🔍 Testing config: {group_ratios}")
         run_prune(cfg, dict_DB, group_ratios, suffix=suffix)
 
+
 def main():
     cfg = Config()
     cfg = parse_args(cfg)
@@ -109,12 +148,18 @@ def main():
         model = dict_DB["model"]
         print("Model is on device:", next(model.parameters()).device)
 
+    if 'quant_A' in cfg.run_mode:
+        quant_fp_and_bf(cfg, dict_DB)
+    if 'info_quant' in cfg.run_mode:
+        quant_info(cfg, dict_DB)
     if 'prune' in cfg.run_mode:
         main_prune(cfg, dict_DB)
     if 'long_run' in cfg.run_mode:
         long_run(cfg, dict_DB)
-    if 'multi' in cfg.run_mode:
-        multi(cfg, dict_DB)
+    if 'multi_pruned' in cfg.run_mode:
+        multi_pruned(cfg, dict_DB)
+    if 'multi_quant' in cfg.run_mode:
+        multi_quant(cfg, dict_DB)
     if 'test' in cfg.run_mode:
         main_test(cfg, dict_DB)
     if 'train' in cfg.run_mode:

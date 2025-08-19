@@ -12,7 +12,7 @@ def load_model_for_test(cfg, dict_DB):
         elif cfg.param_name == 'max':
             checkpoint = torch.load(cfg.dir['weight'] + f'checkpoint_max_acc_tusimple_res_{cfg.backbone}', weights_only=False)
         elif cfg.param_name == 'multi':
-            checkpoint = torch.load(cfg.dir['weight'] + 'pruned/' + cfg.dir['current'], weights_only=False)
+            checkpoint = torch.load(cfg.dir['weight'] + 'quant/' + cfg.dir['current'], weights_only=False)
     model = Model(cfg=cfg)
     model.load_state_dict(checkpoint['model'], strict=False)
     model = model.cuda()
@@ -21,6 +21,28 @@ def load_model_for_test(cfg, dict_DB):
 
 
 def load_model_for_pruning(cfg, dict_DB):
+    checkpoint_path = os.path.join(cfg.dir['weight'], f'checkpoint_tusimple_res_{cfg.backbone}')
+
+    if not os.path.exists(checkpoint_path):
+        raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+
+    checkpoint = torch.load(checkpoint_path, weights_only=False)
+
+    print(f"✅ Checkpoint loaded from: {checkpoint_path}")
+    print(f"🔑 Checkpoint type: {type(checkpoint)}")
+
+    model = Model(cfg=cfg)
+
+    # Since it's a raw state_dict, load it directly
+    model.load_state_dict(checkpoint['model'], strict=False)
+
+    model.cuda()
+    model.eval()
+    dict_DB["model"] = model
+
+    return dict_DB
+
+def load_model_for_quant(cfg, dict_DB):
     checkpoint_path = os.path.join(cfg.dir['weight'], f'checkpoint_tusimple_res_{cfg.backbone}')
 
     if not os.path.exists(checkpoint_path):
