@@ -108,7 +108,7 @@ def run_group_grid_prune(cfg, dict_DB):
 
     ratio_options = {
         "encoder": ratios,
-        "decoder": ratios,
+#      "decoder": ratios,
         "squeeze": ratios,
  #       "heads":   ratios,
     }

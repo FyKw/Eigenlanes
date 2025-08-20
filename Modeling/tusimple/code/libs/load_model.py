@@ -12,7 +12,7 @@ def load_model_for_test(cfg, dict_DB):
         elif cfg.param_name == 'max':
             checkpoint = torch.load(cfg.dir['weight'] + f'checkpoint_max_acc_tusimple_res_{cfg.backbone}', weights_only=False)
         elif cfg.param_name == 'multi':
-            checkpoint = torch.load(cfg.dir['weight'] + 'quant/' + cfg.dir['current'], weights_only=False)
+            checkpoint = torch.load(cfg.dir['weight'] + 'prune/' + cfg.dir['current'], weights_only=False)
     model = Model(cfg=cfg)
     model.load_state_dict(checkpoint['model'], strict=False)
     model = model.cuda()
