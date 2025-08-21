@@ -152,32 +152,50 @@ class Model(nn.Module):
             nn.Conv1d(self.c_feat2 * 3, self.c_feat2 * 3, kernel_size=1, bias=False))
 
     def get_lane_mask_area(self, mask):
+        # ensure torch tensor (no hard-coded .cuda())
+        if not torch.is_tensor(mask):
+            mask = torch.as_tensor(mask)
+        mask = mask.to(torch.float32)  # safe for mul with feature maps
+
         n, h, w = mask.shape
-        area = torch.zeros(n, dtype=torch.float32).cuda()
+        area = torch.zeros(n, dtype=torch.float32, device=mask.device)
         for i in range(n):
             area[i] = mask[i].nonzero().shape[0]
 
+        # shape (1,1,n,h,w) to broadcast against (b,c,1,h,w)
         return mask.view(1, 1, n, h, w), area
 
     def lane_pooling(self, feat_map, idx, sf):
         b, c, h, w = feat_map.shape
         _, n = idx.shape
 
-        mask = self.cand_mask[sf][:, :, idx].view(b, 1, n, h, w)
-        area = self.cand_area[sf][idx].view(b, 1, n, 1, 1)
+        cand_mask = self.cand_mask[sf].to(feat_map.device, dtype=feat_map.dtype)
+        cand_area = self.cand_area[sf].to(feat_map.device, dtype=feat_map.dtype)
+        if idx.device != cand_mask.device:
+            idx = idx.to(cand_mask.device)
+
+        mask = cand_mask[:, :, idx].view(b, 1, n, h, w)
+        area = cand_area[idx].view(b, 1, n, 1, 1)
 
         line_feat = torch.sum(mask * feat_map.view(b, c, 1, h, w), dim=(3, 4), keepdim=True) / area
         return line_feat[:, :, :, 0, 0]
 
     def extract_lane_feat(self, feat_map, sf):
         b, c, h, w = feat_map.shape
-        line_feat = torch.sum(self.cand_mask[sf][:, :, :] * feat_map.view(b, c, 1, h, w), dim=(3, 4)) / self.cand_area[sf][:].view(1, 1, -1)
 
+        cand_mask = self.cand_mask[sf].to(feat_map.device, dtype=feat_map.dtype)
+        cand_area = self.cand_area[sf].to(feat_map.device, dtype=feat_map.dtype)
+
+        line_feat = torch.sum(cand_mask * feat_map.view(b, c, 1, h, w), dim=(3, 4)) / cand_area.view(1, 1, -1)
         return line_feat
 
     def selection_and_removal(self, prob, batch_idx):
         idx_max = torch.sort(prob, descending=True, dim=1)[1][0, 0]
-        cluster_idx = ((self.cand_iou[idx_max] >= self.thresd_nms_iou)).nonzero()[:, 0]
+        cluster_idx = (self.cand_iou[idx_max] >= self.thresd_nms_iou).nonzero(as_tuple=False)[:, 0]
+
+        # ensure index device matches tensors we write into
+        if hasattr(self, "visit_mask"):
+            cluster_idx = cluster_idx.to(self.visit_mask.device)
 
         if prob[0][idx_max] >= self.thresd_score:  # removal
             self.visit_mask[batch_idx, :, cluster_idx] = 0
@@ -248,7 +266,19 @@ class Model(nn.Module):
 
         return corr
 
+    def forward(self, img):
+        """
+        Minimal forward used for tracing / pruning tools.
+        Runs the same pipeline you use in tests so all deps are visible.
+        Returns logits dict to keep a scalar path if needed.
+        """
+        self.forward_for_encoding(img)
+        self.forward_for_squeeze()
+        self.forward_for_lane_feat_extraction()
+        return self.forward_for_lane_component_prediction()
+
 def l2_normalization(x):
     ep = 1e-6
     out = x / (torch.norm(x, p=2, dim=1, keepdim=True) + ep)
     return out
+

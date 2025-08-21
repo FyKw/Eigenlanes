@@ -10,24 +10,29 @@ from libs.generator import *
 from libs.load_model import *
 
 def prepare_dataloader(cfg, dict_DB):
-    # train dataloader
-    dataset = Dataset_Train(cfg=cfg)
-    trainloader = torch.utils.data.DataLoader(dataset=dataset,
-                                              batch_size=cfg.batch_size['img'],
-                                              shuffle=True,
-                                              num_workers=cfg.num_workers,
-                                              worker_init_fn=_init_fn)
-    dict_DB['trainloader'] = trainloader
-
-    # test dataloader
-    dataset = Dataset_Test(cfg=cfg)
-    testloader = torch.utils.data.DataLoader(dataset=dataset,
+    # --- always build TEST loader (you have test data) ---
+    dataset_test = Dataset_Test(cfg=cfg)
+    testloader = torch.utils.data.DataLoader(dataset=dataset_test,
                                              batch_size=1,
                                              shuffle=False,
                                              num_workers=cfg.num_workers,
                                              pin_memory=False)
     dict_DB['testloader'] = testloader
+
+    # --- build TRAIN loader only when actually training ---
+    if 'train' in cfg.run_mode:
+        dataset_train = Dataset_Train(cfg=cfg)
+        trainloader = torch.utils.data.DataLoader(dataset=dataset_train,
+                                                  batch_size=cfg.batch_size['img'],
+                                                  shuffle=True,
+                                                  num_workers=cfg.num_workers,
+                                                  worker_init_fn=_init_fn)
+        dict_DB['trainloader'] = trainloader
+    else:
+        print("ℹ️ Skipping train dataloader (run_mode does not include 'train').")
+
     return dict_DB
+
 
 def prepare_model(cfg, dict_DB):
     print(dict_DB)

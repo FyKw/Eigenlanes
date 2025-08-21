@@ -5,12 +5,11 @@ from options.args import *
 from tests.test import *
 from trains.train import *
 from libs.prepare import *
-from tools.prune_model import run_prune, count_sparsity
+from tools.prune_model import run_prune, count_sparsity, run_prune_encoder_and_squeeze
 from libs.load_model import load_model_for_pruning, load_model_for_test, load_model_for_quant
 from tools.quant import *
 import torch
 from itertools import product
-
 
 def main_eval(cfg, dict_DB):
     test_process = Test_Process(cfg, dict_DB)
@@ -28,10 +27,11 @@ def main_train(cfg, dict_DB):
 
 
 def main_prune(cfg, dict_DB):
-    prune_ratio = 0.05
+    ratios = {"encoder": 0.30, "squeeze": 0.0}
     dict_DB = load_model_for_pruning(cfg, dict_DB)
+    run_prune_encoder_and_squeeze(cfg, dict_DB, ratios, suffix="")
 
-    run_prune(cfg, dict_DB, prune_ratio)
+
 
 def quant_info(cfg, dict_DB):
     dict_DB = load_model_for_quant(cfg, dict_DB)
@@ -48,14 +48,6 @@ def quant_fp_and_bf(cfg, dict_DB):
 
     bf16_m = to_bf16_inference(base)
     save_quant_variant(cfg, bf16_m, "bf16")
-
-
-def long_run(cfg, dict_DB):
-    steps = [i * 0.05 for i in range(20)]
-
-    dict_DB = load_model_for_pruning(cfg, dict_DB)
-    for prune_ratio in steps:
-        run_prune(cfg, dict_DB, prune_ratio)
 
 def multi_quant(cfg, dict_DB):
     quant_dir =  os.path.join(cfg.dir['weight'], 'quant')
@@ -104,13 +96,13 @@ def multi_pruned(cfg, dict_DB):
 
 def run_group_grid_prune(cfg, dict_DB):
     # small, illustrative grid (expand if you want)
-    ratios = [0.0, 0.2, 0.3, 0.4]
+    ratios = [0.0, 0.2, 0.3, 0.4, 0.5]
 
     ratio_options = {
         "encoder": ratios,
-#      "decoder": ratios,
-        "squeeze": ratios,
- #       "heads":   ratios,
+#       "decoder": ratios,
+#       "squeeze": ratios,
+#       "heads":   ratios,
     }
 
     keys = list(ratio_options.keys())
@@ -154,8 +146,6 @@ def main():
         quant_info(cfg, dict_DB)
     if 'prune' in cfg.run_mode:
         main_prune(cfg, dict_DB)
-    if 'long_run' in cfg.run_mode:
-        long_run(cfg, dict_DB)
     if 'multi_pruned' in cfg.run_mode:
         multi_pruned(cfg, dict_DB)
     if 'multi_quant' in cfg.run_mode:

@@ -4,20 +4,31 @@ from networks.model import Model
 from networks.loss import *
 
 def load_model_for_test(cfg, dict_DB):
+    # pick the checkpoint as you already do...
     if cfg.run_mode == 'test_paper':
-        checkpoint = torch.load(cfg.dir['weight_paper'] + f'checkpoint_tusimple_res_{cfg.backbone}', weights_only=False)
+        checkpoint = torch.load(cfg.dir['weight_paper'] + f'checkpoint_tusimple_res_{cfg.backbone}', map_location="cpu")
     else:
         if cfg.param_name == 'trained_last':
-            checkpoint = torch.load(cfg.dir['weight'] + 'checkpoint_final')
+            checkpoint = torch.load(cfg.dir['weight'] + 'checkpoint_final', map_location="cpu")
         elif cfg.param_name == 'max':
-            checkpoint = torch.load(cfg.dir['weight'] + f'checkpoint_max_acc_tusimple_res_{cfg.backbone}', weights_only=False)
+            checkpoint = torch.load(cfg.dir['weight'] + f'checkpoint_max_acc_tusimple_res_{cfg.backbone}', map_location="cpu")
         elif cfg.param_name == 'multi':
-            checkpoint = torch.load(cfg.dir['weight'] + 'prune/' + cfg.dir['current'], weights_only=False)
+            checkpoint = torch.load(cfg.dir['weight'] + 'pruned/' + cfg.dir['current'], map_location="cpu", weights_only=False)
+
+    # === Option A: if a full model object is present, use it ===
+    if isinstance(checkpoint, dict) and "model_obj" in checkpoint:
+        model = checkpoint["model_obj"]
+        model = model.cuda().eval()
+        dict_DB['model'] = model
+        return dict_DB
+
+    # === Fallback: old-style checkpoints (state_dict only) ===
     model = Model(cfg=cfg)
-    model.load_state_dict(checkpoint['model'], strict=False)
-    model = model.cuda()
+    model.load_state_dict(checkpoint['model'], strict=False)  # or True if shapes match
+    model = model.cuda().eval()
     dict_DB['model'] = model
     return dict_DB
+
 
 
 def load_model_for_pruning(cfg, dict_DB):
