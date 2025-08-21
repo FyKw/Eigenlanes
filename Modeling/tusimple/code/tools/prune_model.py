@@ -637,8 +637,8 @@ def prune_encoder_structured_l2(model: nn.Module, encoder_ratio: float, example_
                 score = w.view(c_out, -1).norm(p=2, dim=1)
                 prune_idx = torch.argsort(score)[:pruned].tolist()
 
-                plan = DG.get_pruning_group(conv, tp.prune_conv_out_channels, prune_idx)
-                plan.exec()
+                group = DG.get_pruning_group(conv, tp.prune_conv_out_channels, prune_idx)
+                group.exec()
 
     return model
 

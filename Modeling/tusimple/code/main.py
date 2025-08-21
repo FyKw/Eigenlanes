@@ -27,7 +27,7 @@ def main_train(cfg, dict_DB):
 
 
 def main_prune(cfg, dict_DB):
-    ratios = {"encoder": 0.30, "squeeze": 0.0}
+    ratios = {"encoder": 0.0, "squeeze": 0.0}
     dict_DB = load_model_for_pruning(cfg, dict_DB)
     run_prune_encoder_and_squeeze(cfg, dict_DB, ratios, suffix="")
 
