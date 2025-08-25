@@ -40,7 +40,6 @@ class Test_Process(object):
     def init_data(self):
         self.result = {'out': {'mul': []}, 'gt': {'mul': []}, 'name': []}
         self.datalist = []
-        # NEW: accumulators for per-stage sums
         self.stage_sums = {
             "h2d_ms": 0.0,
             "encode_ms": 0.0,
@@ -58,18 +57,32 @@ class Test_Process(object):
         self.num_samples = 0
 
     def _time_block(self, fn):
-        """Minimal timing helper with CUDA sync for accuracy."""
-        torch.cuda.synchronize() if torch.cuda.is_available() else None
-        t0 = time.perf_counter()
-        out = fn()
-        torch.cuda.synchronize() if torch.cuda.is_available() else None
-        dt_ms = (time.perf_counter() - t0) * 1000.0
-        return out, dt_ms
+        if torch.cuda.is_available():
+            start = torch.cuda.Event(enable_timing=True)
+            end = torch.cuda.Event(enable_timing=True)
+            start.record()
+            out = fn()
+            end.record()
+            torch.cuda.synchronize()
+            dt_ms = start.elapsed_time(end)
+            return out, dt_ms
+        else:
+            import time
+            t0 = time.perf_counter()
+            out = fn()
+            return out, (time.perf_counter() - t0) * 1000.0
 
     def run(self, model, mode='val', prune_config_str="default"):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model = model.to(device)
         self.init_data()
+
+        torch.backends.cudnn.benchmark = True
+        with torch.inference_mode():
+            # Warmup
+            for _ in range(10):
+                _ = model(self.testloader.dataset[0]['img'].unsqueeze(0).to(device, non_blocking=True))
+            torch.cuda.synchronize()
 
         with torch.no_grad():
             model.eval()
@@ -79,8 +92,8 @@ class Test_Process(object):
             for i, self.batch in enumerate(self.testloader):
                 # H2D
                 t0 = time.perf_counter()
-                self.batch['img'] = self.batch['img'].to(device)
-                self.batch['seg_label'] = self.batch['seg_label'].to(device)
+                self.batch['img'] = self.batch['img'].to(device, non_blocking=True)
+                self.batch['seg_label'] = self.batch['seg_label'].to(device, non_blocking=True)
                 torch.cuda.synchronize() if torch.cuda.is_available() else None
                 self.stage_sums["h2d_ms"] += (time.perf_counter() - t0) * 1000.0
 
@@ -207,5 +220,5 @@ class Test_Process(object):
                 fn
             ])
 
-        print(f'⏱ Inference: {inference_time:.3f}s | Accuracy: {acc:.4f} | FP: {fp} | FN: {fn}')
+        print(f'⏱ Inference: {inference_time:.1f}s | Accuracy: {acc:.2f} | FP: {fp:.2f} | FN: {fn:.2f}')
         return metric

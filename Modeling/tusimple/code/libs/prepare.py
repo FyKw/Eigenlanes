@@ -10,28 +10,41 @@ from libs.generator import *
 from libs.load_model import *
 
 def prepare_dataloader(cfg, dict_DB):
-    # --- always build TEST loader (you have test data) ---
+    # TEST
     dataset_test = Dataset_Test(cfg=cfg)
-    testloader = torch.utils.data.DataLoader(dataset=dataset_test,
-                                             batch_size=1,
-                                             shuffle=False,
-                                             num_workers=cfg.num_workers,
-                                             pin_memory=False)
+    testloader = torch.utils.data.DataLoader(
+        dataset=dataset_test,
+        batch_size=1,
+        shuffle=False,
+        num_workers=cfg.num_workers,
+        pin_memory=True,
+        # optional niceties:
+        persistent_workers=cfg.num_workers > 0,
+        prefetch_factor=2 if cfg.num_workers > 0 else None,
+        # pin_memory_device="cuda"  # (PyTorch ≥ 2.0; optional)
+    )
     dict_DB['testloader'] = testloader
 
-    # --- build TRAIN loader only when actually training ---
+    # TRAIN (only when training)
     if 'train' in cfg.run_mode:
         dataset_train = Dataset_Train(cfg=cfg)
-        trainloader = torch.utils.data.DataLoader(dataset=dataset_train,
-                                                  batch_size=cfg.batch_size['img'],
-                                                  shuffle=True,
-                                                  num_workers=cfg.num_workers,
-                                                  worker_init_fn=_init_fn)
+        trainloader = torch.utils.data.DataLoader(
+            dataset=dataset_train,
+            batch_size=cfg.batch_size['img'],
+            shuffle=True,
+            num_workers=cfg.num_workers,
+            worker_init_fn=_init_fn,
+            pin_memory=True,              # ← also helpful for training
+            persistent_workers=cfg.num_workers > 0,
+            prefetch_factor=2 if cfg.num_workers > 0 else None,
+            # pin_memory_device="cuda"
+        )
         dict_DB['trainloader'] = trainloader
     else:
         print("ℹ️ Skipping train dataloader (run_mode does not include 'train').")
 
     return dict_DB
+
 
 
 def prepare_model(cfg, dict_DB):

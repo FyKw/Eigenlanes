@@ -27,7 +27,7 @@ def main_train(cfg, dict_DB):
 
 
 def main_prune(cfg, dict_DB):
-    ratios = {"encoder": 0.0, "squeeze": 0.0}
+    ratios = {"encoder": 0.0, "squeeze": 0.2}
     dict_DB = load_model_for_pruning(cfg, dict_DB)
     run_prune_encoder_and_squeeze(cfg, dict_DB, ratios, suffix="")
 
@@ -74,6 +74,7 @@ def multi_pruned(cfg, dict_DB):
     model_files = [file for file in os.listdir(pruned_dir) if file.startswith('checkpoint_tusimple')]
 
     for i, file in enumerate(model_files, start=1):
+        print("-------------------------------------------------------")
         print(f"Processing model {i}/{len(model_files)}: {file}")
 
         cfg.dir['current'] = file
@@ -87,21 +88,22 @@ def multi_pruned(cfg, dict_DB):
         test_process = Test_Process(cfg, dict_DB)
 
         # Print sparsity
-        sparsity = count_sparsity(dict_DB['model'].state_dict())
-        print(f"Running test on model '{file}' with sparsity: {sparsity:.2f}%")
+        #sparsity = count_sparsity(dict_DB['model'].state_dict())
+        #print(f"Running test on model '{file}' with sparsity: {sparsity:.2f}%")
 
         # Run the test with config string
         test_process.run(dict_DB['model'], mode='test', prune_config_str=prune_config_str)
 
 
 def run_group_grid_prune(cfg, dict_DB):
-    # small, illustrative grid (expand if you want)
-    ratios = [0.0, 0.2, 0.3, 0.4, 0.5]
+    #ratios = [0.0, 0.2, 0.3, 0.4, 0.5]
 
+    encoder_ratios = [0.0, 0.2]
+    squeeze_ratios = [0.0, 0.1, 0.2, 0.3, 0.4]
     ratio_options = {
-        "encoder": ratios,
+        "encoder": encoder_ratios,
 #       "decoder": ratios,
-#       "squeeze": ratios,
+       "squeeze": squeeze_ratios,
 #       "heads":   ratios,
     }
 
@@ -115,6 +117,7 @@ def run_group_grid_prune(cfg, dict_DB):
         suffix = "_".join([f"{k[:4]}{int(v * 100)}" for k, v in group_ratios.items()])
         print(f"\n🔍 Testing config: {group_ratios}")
         run_prune(cfg, dict_DB, group_ratios, suffix=suffix)
+
 
 
 def main():
