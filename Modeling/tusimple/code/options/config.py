@@ -55,7 +55,7 @@ class Config(object):
         self.datalist = 'train_set'  # ['train_set'] only
 
         # ------------------- need to modify ------------------- #
-        self.dir['dataset'] = '--dataset path'
+        self.dir['datasets'] = '--dataset path'
         # ------------------------------------------------------ #
 
     def setting_for_image_param(self):

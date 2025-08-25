@@ -1,10 +1,10 @@
 import os, copy, time
-import torch
-import torch.nn as nn
 import torch.nn.utils.prune as prune
 from types import GeneratorType
+import copy
+import torch
+import torch.nn as nn
 import torch_pruning as tp
-
 # ---------- helpers ----------
 
 def count_size(state_dict):
@@ -207,6 +207,15 @@ def _get_any_loader(dict_DB, cfg=None, device="cuda"):
     print("⚠️ No dataloader found in dict_DB; using synthetic calibration batches.")
     return _synthetic_loader(cfg, device=device, num_batches=8, batch_size=1)
 
+def _round_keep_channels(c_out: int, prune_ratio: float, round_to: int = 8) -> int:
+    prune_ratio = max(0.0, min(0.95, float(prune_ratio)))
+    keep = int(round((1.0 - prune_ratio) * c_out))
+    keep = max(1, min(c_out - 1, keep))
+    if round_to > 1:
+        keep = max(1, (keep // round_to) * round_to)
+        if keep >= c_out:
+            keep = c_out - (c_out % round_to or round_to)
+    return keep
 
 class TaylorCollector:
     """
@@ -607,18 +616,15 @@ def _l2_out_channel_importance(conv: nn.Conv2d) -> torch.Tensor:
         return torch.zeros(0, device=w.device)
     return w.view(oc, -1).norm(p=2, dim=1)
 
-def prune_encoder_structured_l2(model: nn.Module, encoder_ratio: float, example_inputs: torch.Tensor):
+def prune_encoder_structured_l2(model: nn.Module, encoder_ratio: float, example_inputs: torch.Tensor, round_to: int = 8):
     """
-    Structured channel pruning inside ResNet encoder (layer2/3/4).
-    MUST run with autograd enabled (no torch.no_grad).
+    encoder_ratio: single float applied to all blocks in layer2/3/4
     """
     if encoder_ratio <= 0.0:
         return model
 
-    # Make sure autograd is ON and example_inputs participates in the graph
     with torch.enable_grad():
         example_inputs = example_inputs.requires_grad_(True)
-
         DG = tp.DependencyGraph().build_dependency(model, example_inputs=example_inputs)
 
         stages = [model.encoder.layer2, model.encoder.layer3, model.encoder.layer4]
@@ -628,18 +634,17 @@ def prune_encoder_structured_l2(model: nn.Module, encoder_ratio: float, example_
                 if not isinstance(conv, nn.Conv2d):
                     continue
                 c_out = conv.out_channels
-                pruned = int(round(encoder_ratio * c_out))
-                if pruned <= 0 or pruned >= c_out:
+                keep = _round_keep_channels(c_out, encoder_ratio, round_to=round_to)
+                pruned = c_out - keep
+                if pruned <= 0:
                     continue
 
-                # L2 importance per out-channel
                 w = conv.weight.detach()
-                score = w.view(c_out, -1).norm(p=2, dim=1)
-                prune_idx = torch.argsort(score)[:pruned].tolist()
+                score = w.view(c_out, -1).norm(p=2, dim=1)           # L2 importance
+                prune_idx = torch.argsort(score)[:pruned].tolist()   # prune least-important
 
                 group = DG.get_pruning_group(conv, tp.prune_conv_out_channels, prune_idx)
                 group.exec()
-
     return model
 
 
@@ -686,11 +691,8 @@ def run_prune_taylor_slim(cfg, dict_DB, group_ratios, suffix="", calib_batches=8
 
 def run_prune_encoder_and_squeeze(cfg, dict_DB, ratios, suffix="", calib_batches=8):
     """
-    ratios: dict like {"encoder": 0.30, "squeeze": 0.20}
-    1) clone baseline
-    2) prune encoder channels (structured L2) with torch-pruning
-    3) Taylor-FO prune+slim squeeze (your existing routine)
-    4) save full model object (Option A) for painless loading
+    ratios: {"encoder": <float>, "squeeze": <float>}
+    Saves CPU 'model_obj' for painless loading.
     """
     device = "cuda" if torch.cuda.is_available() else "cpu"
     base = dict_DB.get("model", None)
@@ -699,37 +701,26 @@ def run_prune_encoder_and_squeeze(cfg, dict_DB, ratios, suffix="", calib_batches
 
     model = copy.deepcopy(base).to(device).eval()
 
-    # 1) Encoder structured pruning
     enc_ratio = float(ratios.get("encoder", 0.0))
+    sq_ratio  = float(ratios.get("squeeze", 0.0))
+
+    # 1) encoder
     example_inputs = torch.randn(1, 3, int(cfg.height), int(cfg.width), device=device, requires_grad=True)
-    with torch.enable_grad():
-        model = prune_encoder_structured_l2(model, enc_ratio, example_inputs)
+    model = prune_encoder_structured_l2(model, enc_ratio, example_inputs, round_to=8)
 
-
-    # 2) Squeeze Taylor-FO prune+slim (reuse your function; it expects dict_DB['model'])
-    tmp_db = {**dict_DB, "model": model}
-    sq_ratio = float(ratios.get("squeeze", 0.0))
+    # 2) squeeze (Taylor-FO + slim)
     if sq_ratio > 0.0:
-        model, _meta = taylor_prune_and_slim_squeeze(
-            cfg, {**tmp_db, "model": model}, {"squeeze": sq_ratio},
-            calib_batches=calib_batches, device=device
-        )
-    else:
-        _meta = None
+        tmp_db = {**dict_DB, "model": model}
+        res = taylor_prune_and_slim_squeeze(cfg, tmp_db, {"squeeze": sq_ratio}, calib_batches=calib_batches, device=device)
+        model = res[0] if isinstance(res, tuple) else res  # accept either return style
 
-    # 3) Save (Option A: save full object on CPU)
-    out_dir = os.path.join(cfg.dir["weight"], "pruned")
-    os.makedirs(out_dir, exist_ok=True)
+    # 3) save (Option A)
+    out_dir = os.path.join(cfg.dir["weight"], "pruned"); os.makedirs(out_dir, exist_ok=True)
     if not suffix:
         suffix = f"enc{int(enc_ratio*100)}_sq{int(sq_ratio*100)}"
     out_path = os.path.join(out_dir, f"checkpoint_tusimple_res_{cfg.backbone}_pruned_{suffix}")
 
     model_cpu = model.to("cpu")
-    torch.save({
-        "epoch": 0,
-        "val_result": 0.0,
-        "model": model_cpu.state_dict(),    # keep for bc
-        "model_obj": model_cpu,             # Option A: painless load
-    }, out_path)
-    print(f"✅ Saved encoder+squeeze-pruned model to: {out_path}")
+    torch.save({"epoch":0, "val_result":0.0, "model":model_cpu.state_dict(), "model_obj":model_cpu}, out_path)
+    print(f"✅ Saved to: {out_path}")
     return out_path

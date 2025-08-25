@@ -95,28 +95,20 @@ def multi_pruned(cfg, dict_DB):
         test_process.run(dict_DB['model'], mode='test', prune_config_str=prune_config_str)
 
 
+
+
 def run_group_grid_prune(cfg, dict_DB):
-    #ratios = [0.0, 0.2, 0.3, 0.4, 0.5]
+    encoder_grid = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5]   # layer-level encoder ratios
+    squeeze_grid = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5]   # layer-level squeeze ratios
 
-    encoder_ratios = [0.0, 0.2]
-    squeeze_ratios = [0.0, 0.1, 0.2, 0.3, 0.4]
-    ratio_options = {
-        "encoder": encoder_ratios,
-#       "decoder": ratios,
-       "squeeze": squeeze_ratios,
-#       "heads":   ratios,
-    }
+    for enc_r, sq_r in product(encoder_grid, squeeze_grid):
+        ratios = {"encoder": enc_r, "squeeze": sq_r}
+        suffix = f"enc{int(enc_r*100)}_sq{int(sq_r*100)}"
+        print(f"\n🔍 Testing config: {ratios}")
 
-    keys = list(ratio_options.keys())
-    value_combinations = list(product(*[ratio_options[k] for k in keys]))
+        dict_DB = load_model_for_pruning(cfg, dict_DB)
+        run_prune_encoder_and_squeeze(cfg, dict_DB, ratios, suffix=suffix)
 
-    dict_DB = load_model_for_pruning(cfg, dict_DB)
-
-    for combo in value_combinations:
-        group_ratios = dict(zip(keys, combo))
-        suffix = "_".join([f"{k[:4]}{int(v * 100)}" for k, v in group_ratios.items()])
-        print(f"\n🔍 Testing config: {group_ratios}")
-        run_prune(cfg, dict_DB, group_ratios, suffix=suffix)
 
 
 
