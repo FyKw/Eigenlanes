@@ -79,35 +79,41 @@ def multi_pruned(cfg, dict_DB):
         test_process = Test_Process(cfg, dict_DB)
         test_process.run(dict_DB['model'], mode='test', prune_config_str=prune_config_str)
 
-def run_onnx(cfg, dict_DB, iters=200, warmup=50, fp16=True):
+def run_onnx(cfg, dict_DB, iters=200, warmup=50, precision="fp32"):
     """
-    Exports ALL pruned checkpoints to ONNX and benchmarks them with ONNX Runtime (CUDA).
-    Looks in <weight_dir>/pruned.
+    Export all pruned checkpoints to <weight_dir>/onnx/ and benchmark them.
+    Logs results to <weight_dir>/onnx/onnx_bench.csv
     """
-    import os
     pruned_dir = os.path.join(cfg.dir['weight'], 'pruned')
-    if not os.path.isdir(pruned_dir):
-        print(f"⚠️ No 'pruned' dir at: {pruned_dir}")
-        return
+    onnx_dir   = os.path.join(cfg.dir['weight'], 'onnx')
+    os.makedirs(onnx_dir, exist_ok=True)
+    csv_log_path = os.path.join(onnx_dir, "onnx_bench.csv")
 
     files = [f for f in os.listdir(pruned_dir) if f.startswith('checkpoint_tusimple')]
     if not files:
-        print("⚠️ No pruned checkpoints found.")
+        print(f"⚠️ No pruned checkpoints found in {pruned_dir}")
         return
 
     for i, file in enumerate(files, start=1):
         print(f"\n[{i}/{len(files)}] ONNX export+bench for: {file}")
+        # load pruned checkpoint (your loader uses cfg.param_name='multi')
         cfg.dir['current'] = file
-        cfg.param_name = 'multi'  # loader branch for pruned files
+        cfg.param_name = 'multi'
         dict_DB = load_model_for_test(cfg, dict_DB)
         model = dict_DB['model']
 
-        # export ONNX
-        onnx_path = os.path.join(pruned_dir, file + ".onnx")
-        export_onnx(model, cfg.height, cfg.width, onnx_path)
+        base = file  # filenames in your setup often have no extension
+        onnx_path = os.path.join(onnx_dir, base + (f"_{precision}.onnx" if precision else ".onnx"))
 
-        # bench
-        bench_onnx_cuda(onnx_path, cfg.height, cfg.width)
+        # export (precision: "fp32" now; later you can try "fp16")
+        export_onnx(model, cfg.height, cfg.width, onnx_path, precision=precision)
+
+        # bench (auto-match dtype in ONNX; pass model_name for logs)
+        bench_onnx_cuda(
+            onnx_path, cfg.height, cfg.width,
+            iters=iters, warmup=warmup, fp16=None,
+            csv_log_path=csv_log_path, model_name=base
+        )
 
 
 def run_group_grid_prune(cfg, dict_DB):
