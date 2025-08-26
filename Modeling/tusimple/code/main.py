@@ -10,6 +10,8 @@ from libs.load_model import load_model_for_pruning, load_model_for_test, load_mo
 from tools.quant import *
 import torch
 from itertools import product
+from tools.export_onnx import export_onnx
+from tools.bench_onnx import bench_onnx_cuda
 
 def main_eval(cfg, dict_DB):
     test_process = Test_Process(cfg, dict_DB)
@@ -25,13 +27,10 @@ def main_train(cfg, dict_DB):
     train_process = Train_Process(cfg, dict_DB)
     train_process.run()
 
-
 def main_prune(cfg, dict_DB):
     ratios = {"encoder": 0.0, "squeeze": 0.2}
     dict_DB = load_model_for_pruning(cfg, dict_DB)
     run_prune_encoder_and_squeeze(cfg, dict_DB, ratios, suffix="")
-
-
 
 def quant_info(cfg, dict_DB):
     dict_DB = load_model_for_quant(cfg, dict_DB)
@@ -59,14 +58,9 @@ def multi_quant(cfg, dict_DB):
         cfg.dir['current'] = file
 
         dict_DB = load_model_for_test(cfg, dict_DB)
-
-        # Extract config string from filename (e.g., "_enc10_dec5_cls5_reg0.pt")
         prune_config_str = file.replace("checkpoint_tusimple_res_18_quant_", "")
 
-        # Initialize Test_Process
         test_process = Test_Process(cfg, dict_DB)
-
-        # Run the test with config string
         test_process.run(dict_DB['model'], mode='test', prune_config_str=prune_config_str)
 
 def multi_pruned(cfg, dict_DB):
@@ -78,23 +72,42 @@ def multi_pruned(cfg, dict_DB):
         print(f"Processing model {i}/{len(model_files)}: {file}")
 
         cfg.dir['current'] = file
-
         dict_DB = load_model_for_test(cfg, dict_DB)
 
-        # Extract config string from filename (e.g., "_enc10_dec5_cls5_reg0.pt")
         prune_config_str = file.replace("checkpoint_tusimple_res_18_pruned_", "")
 
-        # Initialize Test_Process
         test_process = Test_Process(cfg, dict_DB)
-
-        # Print sparsity
-        #sparsity = count_sparsity(dict_DB['model'].state_dict())
-        #print(f"Running test on model '{file}' with sparsity: {sparsity:.2f}%")
-
-        # Run the test with config string
         test_process.run(dict_DB['model'], mode='test', prune_config_str=prune_config_str)
 
+def run_onnx(cfg, dict_DB, iters=200, warmup=50, fp16=True):
+    """
+    Exports ALL pruned checkpoints to ONNX and benchmarks them with ONNX Runtime (CUDA).
+    Looks in <weight_dir>/pruned.
+    """
+    import os
+    pruned_dir = os.path.join(cfg.dir['weight'], 'pruned')
+    if not os.path.isdir(pruned_dir):
+        print(f"⚠️ No 'pruned' dir at: {pruned_dir}")
+        return
 
+    files = [f for f in os.listdir(pruned_dir) if f.startswith('checkpoint_tusimple')]
+    if not files:
+        print("⚠️ No pruned checkpoints found.")
+        return
+
+    for i, file in enumerate(files, start=1):
+        print(f"\n[{i}/{len(files)}] ONNX export+bench for: {file}")
+        cfg.dir['current'] = file
+        cfg.param_name = 'multi'  # loader branch for pruned files
+        dict_DB = load_model_for_test(cfg, dict_DB)
+        model = dict_DB['model']
+
+        # export ONNX
+        onnx_path = os.path.join(pruned_dir, file + ".onnx")
+        export_onnx(model, cfg.height, cfg.width, onnx_path)
+
+        # bench
+        bench_onnx_cuda(onnx_path, cfg.height, cfg.width)
 
 
 def run_group_grid_prune(cfg, dict_DB):
@@ -108,8 +121,6 @@ def run_group_grid_prune(cfg, dict_DB):
 
         dict_DB = load_model_for_pruning(cfg, dict_DB)
         run_prune_encoder_and_squeeze(cfg, dict_DB, ratios, suffix=suffix)
-
-
 
 
 def main():
@@ -153,6 +164,8 @@ def main():
         main_eval(cfg, dict_DB)
     if 'grid' in cfg.run_mode:
         run_group_grid_prune(cfg, dict_DB)
+    if 'onnx' in cfg.run_mode:
+        run_onnx(cfg, dict_DB)
 
 
 
