@@ -70,7 +70,7 @@ class Config(object):
         self.scale_factor = [8, 16, 32]
 
     def setting_for_dataloader(self):
-        self.num_workers = 8
+        self.num_workers = 16
         self.data_flip = True
 
         self.sampling = False
@@ -128,14 +128,14 @@ class Config(object):
 
     def setting_for_training(self):
         self.run_mode = 'train'  # ['train', 'test', 'eval']
-        self.resume = True
+        self.resume = False
 
         self.lr = 1e-4
         self.milestones = [30, 60, 90, 120, 150, 180, 210]
         self.weight_decay = 5e-4
         self.gamma = 0.5
 
-        self.epochs = 300
+        self.epochs = 5
         self.epoch_eval = 60
         self.epoch_eval_all = 60
         self.max_iter = 8

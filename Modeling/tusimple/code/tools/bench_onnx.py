@@ -11,9 +11,7 @@ def _ensure_csv_header(csv_path: str):
         with open(csv_path, "w", newline="") as f:
             w = csv.writer(f)
             w.writerow([
-                "timestamp", "model_name", "onnx_file",
-                "provider", "dtype", "iters", "warmup",
-                "avg_ms", "H", "W", "filesize_bytes", "gpu"
+                "model_name", "dtype", "avg_ms", "filesize_bytes"
             ])
 
 def bench_onnx_cuda(onnx_path, H, W, iters=200, warmup=50, fp16=None,
@@ -71,7 +69,6 @@ def bench_onnx_cuda(onnx_path, H, W, iters=200, warmup=50, fp16=None,
             w.writerow([
                 model_name,
                 "fp16" if dtype==np.float16 else "fp32",
-                iters, warmup,
                 round(ms, 3),
                 filesize,
             ])
