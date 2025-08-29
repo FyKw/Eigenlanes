@@ -1,5 +1,5 @@
-import torch
-
+import torch, copy, os
+from libs.load_model import _normalize_val_result
 from libs.save_model import *
 from libs.utils import *
 
@@ -20,6 +20,7 @@ class Train_Process(object):
         self.test_process = dict_DB['test_process']
         self.forward_model = dict_DB['forward_model']
         self.val_result = dict_DB['val_result']
+        self.val_result = _normalize_val_result(self.val_result)
 
         self.logfile = dict_DB['logfile']
         self.epoch_s = dict_DB['epoch']
@@ -103,13 +104,48 @@ class Train_Process(object):
         logger("\nlabel distribution {}\n".format(np.round((self.count / np.sum(self.count)), 3) * 100), self.logfile)
         print("\nlabel distribution {}\n".format(np.round((self.count / np.sum(self.count)), 3) * 100))
 
-        # save model
-        self.ckpt = {'epoch': self.epoch,
-                     'model': self.model,
-                     'optimizer': self.optimizer,
-                     'val_result': self.val_result}
+        # --- after logging avg losses etc. ---
 
-        save_model(checkpoint=self.ckpt, param='checkpoint_final', path=self.cfg.dir['weight'])
+        # 1) Keep a runtime ckpt for validation() compatibility
+        self.ckpt = {
+            'epoch': self.epoch,
+            'model': self.model,  # KEEP the live module here (as before)
+            'optimizer': self.optimizer,
+            'val_result': self.val_result,
+        }
+
+        # 2) On-disk save (our new shape-safe checkpoint) — unchanged
+        ckpt_dir = self.cfg.dir['weight']
+        os.makedirs(ckpt_dir, exist_ok=True)
+
+        state_sd = self.model.state_dict()
+        dev = next(self.model.parameters()).device
+        was_training = self.model.training
+        self.model.eval();
+        self.model.to('cpu')
+
+        ckpt = {
+            'epoch': self.epoch,
+            'model': state_sd,
+            'model_obj': self.model,  # full object for shape-changed resume
+            'optimizer': self.optimizer.state_dict(),
+            'val_result': self.val_result,
+        }
+
+        base_tag = getattr(self.cfg, "finetune_tag", f"model_e{self.epoch:03d}")
+        out_subdir = getattr(self.cfg, "finetune_out_subdir", "finetuned")
+        out_dir = os.path.join(self.cfg.dir['weight'], out_subdir)
+        os.makedirs(out_dir, exist_ok=True)
+
+        fname_epoch = f"{base_tag}__ft_e{self.epoch:03d}.pt"
+        fname_latest = f"{base_tag}__ft_latest.pt"
+        torch.save(ckpt, os.path.join(out_dir, fname_epoch))
+        torch.save(ckpt, os.path.join(out_dir, fname_latest))
+        print(f"💾 Saved finetuned: {os.path.join(out_dir, fname_epoch)}")
+
+        # restore live model
+        self.model.to(dev)
+        if was_training: self.model.train()
 
     def validation(self):
         metric = self.test_process.run(self.model, mode='val')

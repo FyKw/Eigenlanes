@@ -70,7 +70,7 @@ class Config(object):
         self.scale_factor = [8, 16, 32]
 
     def setting_for_dataloader(self):
-        self.num_workers = 16
+        self.num_workers = 8
         self.data_flip = True
 
         self.sampling = False

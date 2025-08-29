@@ -1,4 +1,4 @@
-import os
+import os, glob
 
 from options.config import Config
 from options.args import *
@@ -6,13 +6,101 @@ from tests.test import *
 from trains.train import *
 from libs.prepare import *
 from tools.prune_model import run_prune, count_sparsity, run_prune_encoder_and_squeeze
-from libs.load_model import load_model_for_pruning, load_model_for_test, load_model_for_quant
+from libs.load_model import load_model_for_pruning, load_model_for_test, load_model_for_quant, load_model_for_train
 from tools.quant import *
 import torch
 from itertools import product
 from tools.export_onnx import export_onnx
 from tools.bench_onnx import bench_onnx_cuda
+from datasets.dataset_tusimple import Dataset_Train
 
+def _ensure_trainloader(cfg, dict_DB):
+    """Build a trainloader if missing, without forcing CLI flags."""
+    if 'trainloader' in dict_DB:
+        return dict_DB
+    # Build train loader directly (mirrors prepare_dataloader’s train branch)
+    dataset_train = Dataset_Train(cfg=cfg)
+    trainloader = torch.utils.data.DataLoader(
+        dataset=dataset_train,
+        batch_size=cfg.batch_size['img'],
+        shuffle=True,
+        num_workers=cfg.num_workers,
+        worker_init_fn=_init_fn if '_init_fn' in globals() else None,
+        pin_memory=True,
+        persistent_workers=cfg.num_workers > 0,
+        prefetch_factor=2 if cfg.num_workers > 0 else None,
+    )
+    dict_DB['trainloader'] = trainloader
+    return dict_DB
+
+def _finetune_once(cfg, dict_DB, ckpt_path, extra_epochs=5, new_lr=None, freeze_encoder=False):
+    # tell the loader what to resume from
+    cfg.resume_from = ckpt_path
+    cfg.resume = True
+
+    # >>> add these two:
+    cfg.finetune_out_subdir = "finetuned"                     # where to save
+    cfg.finetune_tag = os.path.splitext(os.path.basename(ckpt_path))[0]  # name seed
+
+    # make sure we have a trainloader
+    dict_DB = _ensure_trainloader(cfg, dict_DB)
+
+    # (re)load model/optimizer/scheduler/loss
+    dict_DB = load_model_for_train(cfg, dict_DB)
+    model = dict_DB['model']
+
+    # optional LR override
+    if new_lr is not None:
+        for g in dict_DB['optimizer'].param_groups:
+            g['lr'] = float(new_lr)
+
+    # optional stage freezing
+    if freeze_encoder:
+        for p in model.encoder.parameters():
+            p.requires_grad = False
+
+    # run only N more epochs from current starting epoch
+    start_epoch = dict_DB['epoch']
+    cfg.epochs = start_epoch + int(extra_epochs)
+
+    # wire a Test_Process (validation)
+    dict_DB['test_process'] = Test_Process(cfg, dict_DB)
+
+    # train
+    trainer = Train_Process(cfg, dict_DB)
+    trainer.run()
+
+    # unfreeze if needed
+    if freeze_encoder:
+        for p in model.encoder.parameters():
+            p.requires_grad = True
+
+    return dict_DB
+
+def run_finetune_from_paths(cfg, dict_DB, ckpt_paths, extra_epochs=5, new_lr=1e-4, freeze_encoder=False):
+    """Fine-tune a list of explicit checkpoint files (full paths)."""
+    for i, ckpt in enumerate(ckpt_paths, 1):
+        if not os.path.exists(ckpt):
+            print(f"⚠️ Skip (not found): {ckpt}")
+            continue
+        print(f"\n[{i}/{len(ckpt_paths)}] Fine-tuning: {ckpt}")
+        dict_DB = _finetune_once(cfg, dict_DB, ckpt, extra_epochs, new_lr, freeze_encoder)
+    return dict_DB
+
+def run_finetune_from_dirs(cfg, dict_DB, dirs, pattern="checkpoint_tusimple*", extra_epochs=5, new_lr=1e-4, freeze_encoder=False):
+    """Scan one or more directories for checkpoints by pattern, then fine-tune each."""
+    all_ckpts = []
+    for d in dirs:
+        if not os.path.isdir(d):
+            print(f"⚠️ Skip dir (not found): {d}")
+            continue
+        hits = sorted(glob.glob(os.path.join(d, pattern)))
+        all_ckpts.extend(hits)
+    if not all_ckpts:
+        print("⚠️ No checkpoints matched; nothing to finetune.")
+        return dict_DB
+
+    return run_finetune_from_paths(cfg, dict_DB, all_ckpts, extra_epochs, new_lr, freeze_encoder)
 def main_eval(cfg, dict_DB):
     test_process = Test_Process(cfg, dict_DB)
     test_process.evaluation(mode='test')
@@ -79,6 +167,7 @@ def multi_pruned(cfg, dict_DB):
         test_process = Test_Process(cfg, dict_DB)
         test_process.run(dict_DB['model'], mode='test', prune_config_str=prune_config_str)
 
+
 def run_onnx(cfg, dict_DB, iters=200, warmup=50, precision="fp32"):
     """
     Export all pruned checkpoints to <weight_dir>/onnx/ and benchmark them.
@@ -133,6 +222,16 @@ def main():
     cfg = Config()
     cfg = parse_args(cfg)
 
+    FINETUNE_FILES = [
+        # examples:
+        # os.path.join(cfg.dir['weight'], 'pruned', 'checkpoint_tusimple_res_18_pruned_enc30_sq5'),
+        # os.path.join(cfg.dir['weight'], 'pruned', 'checkpoint_tusimple_res_18_pruned_enc40_sq10'),
+    ]
+    FINETUNE_DIRS = [
+        os.path.join(cfg.dir['weight'], 'pruned'),
+        # later add: os.path.join(cfg.dir['weight'], 'quant'), etc.
+    ]
+
     os.environ["CUDA_VISIBLE_DEVICES"] = cfg.gpu_id
     torch.backends.cudnn.deterministic = True
 
@@ -172,6 +271,13 @@ def main():
         run_group_grid_prune(cfg, dict_DB)
     if 'onnx' in cfg.run_mode:
         run_onnx(cfg, dict_DB)
+    if 'finetune_files' in cfg.run_mode:
+        run_finetune_from_paths(cfg, dict_DB, FINETUNE_FILES, extra_epochs=5, new_lr=1e-4, freeze_encoder=False)
+    if 'finetune_dirs' in cfg.run_mode:
+        # will scan the listed dirs for "checkpoint_tusimple*" files and finetune all matches
+        run_finetune_from_dirs(cfg, dict_DB, FINETUNE_DIRS, pattern="checkpoint_tusimple*", extra_epochs=5, new_lr=1e-4, freeze_encoder=False)
+
+
 
 
 
