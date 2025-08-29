@@ -137,11 +137,11 @@ class Train_Process(object):
         out_dir = os.path.join(self.cfg.dir['weight'], out_subdir)
         os.makedirs(out_dir, exist_ok=True)
 
-        fname_epoch = f"{base_tag}__ft_e{self.epoch:03d}.pt"
+   #     fname_epoch = f"{base_tag}__ft_e{self.epoch:03d}.pt"
         fname_latest = f"{base_tag}__ft_latest.pt"
-        torch.save(ckpt, os.path.join(out_dir, fname_epoch))
+    #    torch.save(ckpt, os.path.join(out_dir, fname_epoch))
         torch.save(ckpt, os.path.join(out_dir, fname_latest))
-        print(f"💾 Saved finetuned: {os.path.join(out_dir, fname_epoch)}")
+        print(f"💾 Saved finetuned: {os.path.join(out_dir, fname_latest)}")
 
         # restore live model
         self.model.to(dev)

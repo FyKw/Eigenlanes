@@ -135,7 +135,7 @@ class Config(object):
         self.weight_decay = 5e-4
         self.gamma = 0.5
 
-        self.epochs = 5
+        self.epochs = 2
         self.epoch_eval = 60
         self.epoch_eval_all = 60
         self.max_iter = 8
