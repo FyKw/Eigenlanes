@@ -6,7 +6,7 @@ from tests.test import *
 from trains.train import *
 from libs.prepare import *
 from tools.prune_model import run_prune, count_sparsity, run_prune_encoder_and_squeeze
-from libs.load_model import load_model_for_pruning, load_model_for_test, load_model_for_quant, load_model_for_train
+from libs.load_model import load_model_for_pruning, load_model_for_test, load_model_for_quant, load_model_for_train, load_model_from_checkpoint_for_prune
 from tools.quant import *
 import torch
 from itertools import product
@@ -14,24 +14,25 @@ from tools.export_onnx import export_onnx
 from tools.bench_onnx import bench_onnx_cuda
 from datasets.dataset_tusimple import Dataset_Train
 
-def _ensure_trainloader(cfg, dict_DB):
-    """Build a trainloader if missing, without forcing CLI flags."""
+def _ensure_trainloader_local(cfg, dict_DB):
     if 'trainloader' in dict_DB:
         return dict_DB
-    # Build train loader directly (mirrors prepare_dataloader’s train branch)
     dataset_train = Dataset_Train(cfg=cfg)
     trainloader = torch.utils.data.DataLoader(
         dataset=dataset_train,
         batch_size=cfg.batch_size['img'],
         shuffle=True,
         num_workers=cfg.num_workers,
-        worker_init_fn=_init_fn if '_init_fn' in globals() else None,
         pin_memory=True,
         persistent_workers=cfg.num_workers > 0,
         prefetch_factor=2 if cfg.num_workers > 0 else None,
     )
     dict_DB['trainloader'] = trainloader
     return dict_DB
+
+def _ft_latest_path_for_source(cfg, source_ckpt_path):
+    tag = os.path.splitext(os.path.basename(source_ckpt_path))[0]
+    return os.path.join(cfg.dir['weight'], 'finetuned', f"{tag}__ft_latest")
 
 def _finetune_once(cfg, dict_DB, ckpt_path, extra_epochs=5, new_lr=None, freeze_encoder=False):
     # tell the loader what to resume from
@@ -43,7 +44,7 @@ def _finetune_once(cfg, dict_DB, ckpt_path, extra_epochs=5, new_lr=None, freeze_
     cfg.finetune_tag = os.path.splitext(os.path.basename(ckpt_path))[0]  # name seed
 
     # make sure we have a trainloader
-    dict_DB = _ensure_trainloader(cfg, dict_DB)
+    dict_DB = _ensure_trainloader_local(cfg, dict_DB)
 
     # (re)load model/optimizer/scheduler/loss
     dict_DB = load_model_for_train(cfg, dict_DB)
@@ -167,6 +168,97 @@ def multi_pruned(cfg, dict_DB):
         test_process = Test_Process(cfg, dict_DB)
         test_process.run(dict_DB['model'], mode='test', prune_config_str=prune_config_str)
 
+def run_auto_dir_grid(cfg, dict_DB):
+    """
+    Directory-wide grid:
+      For each seed checkpoint found in START_DIRS:
+        For each per-iteration ratio combo (RATIO_GRID):
+          Repeat for LOOPS:
+            prune (per-iteration on remaining) -> TEST
+            finetune -> TEST
+    """
+    # ---- knobs live here (edit in-code) ----
+    START_DIRS = [os.path.join(cfg.dir['weight'], 'seeds')]
+    FILE_PATTERN = "checkpoint_tusimple*"
+    LOOPS          = 5                                            # repeats per combo
+    RATIO_GRID     = {                                            # per-iteration prune ratios
+        "encoder": [0.0, 0.1],
+        "squeeze": [0.0, 0.1],
+    }
+    FT_EPOCHS      = 2
+    FT_LR          = 1e-4
+    FREEZE_ENCODER = False
+
+    # ---------------------------------------
+
+    # collect seeds
+    seeds = []
+
+    # snapshot once; exclude anything that looks generated
+    seeds = [
+        s for s in seeds
+        if "__" not in os.path.basename(s)  # our outputs have __G / __L / __ft
+    ]
+    print(f"Seeds: {len(seeds)} found")
+
+    for d in START_DIRS:
+        if os.path.isdir(d):
+            seeds += sorted(glob.glob(os.path.join(d, FILE_PATTERN)))
+    if not seeds:
+        print("⚠️ No starting checkpoints found in dirs:", START_DIRS)
+        return
+
+    # build ratio combinations (skip the all-zero case)
+    keys = list(RATIO_GRID.keys())
+    combos = []
+    for vals in product(*[RATIO_GRID[k] for k in keys]):
+        ratios = dict(zip(keys, vals))
+        if all(v == 0.0 for v in ratios.values()):
+            continue
+        combos.append(ratios)
+
+    # ensure we can train & test
+    dict_DB = _ensure_trainloader_local(cfg, dict_DB)
+    tester  = Test_Process(cfg, dict_DB)
+
+    for si, seed in enumerate(seeds, 1):
+        print(f"\n====================  SEED [{si}/{len(seeds)}]  {seed}  ====================")
+        for ci, ratios in enumerate(combos, 1):
+            print(f"\n---- combo [{ci}/{len(combos)}]: {ratios} ----")
+            # start each combo from the original seed (not previous combo’s result)
+            current = seed
+
+            for L in range(1, LOOPS + 1):
+                # 1) PRUNE current
+                dict_DB = load_model_from_checkpoint_for_prune(cfg, dict_DB, current)
+                enc = int(100 * float(ratios.get("encoder", 0.0)))
+                sq  = int(100 * float(ratios.get("squeeze", 0.0)))
+                seed_tag = os.path.splitext(os.path.basename(current))[0]
+                suffix   = f"{seed_tag}__G{ci}_L{L}_enc{enc}_sq{sq}"
+                print(f"\n🪚 Loop {L}/{LOOPS} | per-iter ratios: {ratios} | suffix={suffix}")
+                pruned_path = run_prune_encoder_and_squeeze(cfg, dict_DB, ratios, suffix=suffix)
+                # ^ make sure run_prune_encoder_and_squeeze RETURNS the saved path
+
+                # TEST (pruned)
+                cfg.dir['current'] = pruned_path
+                cfg.param_name     = 'multi'
+                dict_DB = load_model_for_test(cfg, dict_DB)
+                tester.run(dict_DB['model'], mode='test', prune_config_str=f"{suffix}__pruned")
+
+                # 2) FINETUNE
+                print(f"🎯 Finetuning: {pruned_path}")
+                _ = _finetune_once(cfg, dict_DB, pruned_path, extra_epochs=FT_EPOCHS,
+                                   new_lr=FT_LR, freeze_encoder=FREEZE_ENCODER)
+                ft_latest = _ft_latest_path_for_source(cfg, pruned_path)
+
+                # TEST (finetuned)
+                cfg.dir['current'] = ft_latest
+                cfg.param_name     = 'multi'
+                dict_DB = load_model_for_test(cfg, dict_DB)
+                tester.run(dict_DB['model'], mode='test', prune_config_str=f"{suffix}__finetuned")
+
+                # next iteration continues from the fine-tuned result
+                current = ft_latest
 
 def run_onnx(cfg, dict_DB, iters=200, warmup=50, precision="fp32"):
     """
@@ -276,9 +368,8 @@ def main():
     if 'finetune_dirs' in cfg.run_mode:
         # will scan the listed dirs for "checkpoint_tusimple*" files and finetune all matches
         run_finetune_from_dirs(cfg, dict_DB, FINETUNE_DIRS, pattern="checkpoint_tusimple*", extra_epochs=5, new_lr=1e-4, freeze_encoder=False)
-
-
-
+    if 'auto' in cfg.run_mode:
+        run_auto_dir_grid(cfg, dict_DB)
 
 
 if __name__ == '__main__':

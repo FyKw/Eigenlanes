@@ -1,4 +1,4 @@
-import os, copy, time
+import os, copy, time, math
 import torch.nn.utils.prune as prune
 from types import GeneratorType
 import copy
@@ -510,12 +510,10 @@ def taylor_prune_and_slim_squeeze(cfg, dict_DB, group_ratios, calib_batches=8, d
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model: nn.Module = dict_DB["model"].to(device)
 
-
-    # Only apply if squeeze group ratio > 0
     prune_ratio = float(group_ratios.get("squeeze", 0.0))
     if prune_ratio <= 0.0:
         print("No squeeze pruning requested; returning original model.")
-        return model
+        return model, {"type": "taylor_squeeze", "note": "no-op"}  # <-- tuple, not bare model
 
     # 1) target the last convs in the three squeeze blocks
     targets = _get_squeeze_last_convs(model)
@@ -544,14 +542,34 @@ def taylor_prune_and_slim_squeeze(cfg, dict_DB, group_ratios, calib_batches=8, d
 
     collector.detach()
 
-    # 2) choose keep indices per squeeze (keep = (1 - prune_ratio))
-    # all three squeeze blocks originally output self.c_feat2 channels
-    # (per your model: self.c_feat2 = 64)
-    keep_idx = {}
-    for name, scores in collector.scores.items():
-        if scores is None:
-            raise RuntimeError(f"No Taylor scores collected for {name}.")
-        keep_idx[name] = _pick_keep_indices(scores, keep_ratio=prune_ratio)  # keep top-K
+    # 2) choose keep indices per squeeze (per-iteration prune_frac on REMAINING)
+    # current OUT-channel counts *before* slimming this round
+    sq1_block = model.feat_squeeze1[3]  # conv_bn_relu
+    sq2_block = model.feat_squeeze2[2]
+    sq3_block = model.feat_squeeze3[1]
+
+    C1 = int(sq1_block.conv.out_channels)
+    C2 = int(sq2_block.conv.out_channels)
+    C3 = int(sq3_block.conv.out_channels)
+
+    min_ch = 8  # or make this a cfg.knob if you like
+
+    # Taylor scores collected by TaylorCollector; keys should be 'sq1_last','sq2_last','sq3_last'
+    s1 = collector.scores.get("sq1_last", None)
+    s2 = collector.scores.get("sq2_last", None)
+    s3 = collector.scores.get("sq3_last", None)
+    if s1 is None or s2 is None or s3 is None:
+        raise RuntimeError("Missing Taylor scores for one of sq{1,2,3}_last.")
+
+    k1 = _safe_keep_k(C1, prune_frac=prune_ratio, min_ch=min_ch)
+    k2 = _safe_keep_k(C2, prune_frac=prune_ratio, min_ch=min_ch)
+    k3 = _safe_keep_k(C3, prune_frac=prune_ratio, min_ch=min_ch)
+
+    idx1 = _safe_topk_keep_idx(s1, k1)
+    idx2 = _safe_topk_keep_idx(s2, k2)
+    idx3 = _safe_topk_keep_idx(s3, k3)
+
+    keep_idx = {"sq1_last": idx1, "sq2_last": idx2, "sq3_last": idx3}
 
     # 3) Rebuild:
     # 3a) shrink last conv+BN in each squeeze block
@@ -570,13 +588,16 @@ def taylor_prune_and_slim_squeeze(cfg, dict_DB, group_ratios, calib_batches=8, d
 
     # 3b) fix the first convs that consume x_concat = cat([sq1, sq2, sq3], dim=1)
     # Build concatenated input-channel indices for these consumers
-    c_each_orig = cfg.c_feat2 if hasattr(cfg, "c_feat2") else model.c_feat2  # 64
-    cat_keep = _concat_keep_indices(
-        keep_idx["sq1_last"].to(device),
-        keep_idx["sq2_last"].to(device),
-        keep_idx["sq3_last"].to(device),
-        c_each_orig,
-    )
+    # Offsets are based on *current* concatenation layout BEFORE slimming this round:
+    # [sq1 (C1), sq2 (C2), sq3 (C3)]
+    o1 = 0
+    o2 = C1
+    o3 = C1 + C2
+    cat_keep = torch.cat([
+        keep_idx["sq1_last"].to(device) + o1,
+        keep_idx["sq2_last"].to(device) + o2,
+        keep_idx["sq3_last"].to(device) + o3,
+    ], dim=0)
 
     # feat_combine[0] is conv_bn_relu; slice its conv's *input*
     fc0_block = model.feat_combine[0]
@@ -602,11 +623,51 @@ def taylor_prune_and_slim_squeeze(cfg, dict_DB, group_ratios, calib_batches=8, d
     slim_meta = {
         "type": "taylor_squeeze",
         "c_feat2_original": int(getattr(model, "c_feat2", 64)),
-        "sq1_keep_idx": keep_idx["sq1_last"].detach().cpu().tolist(),
-        "sq2_keep_idx": keep_idx["sq2_last"].detach().cpu().tolist(),
-        "sq3_keep_idx": keep_idx["sq3_last"].detach().cpu().tolist(),
+        "sq1_keep_idx": _to_cpu_list(keep_idx["sq1_last"]),
+        "sq2_keep_idx": _to_cpu_list(keep_idx["sq2_last"]),
+        "sq3_keep_idx": _to_cpu_list(keep_idx["sq3_last"]),
     }
+
     return model, slim_meta
+
+def _to_cpu_list(idx: torch.Tensor):
+    if idx.is_cuda:
+        torch.cuda.synchronize()
+    return idx.detach().cpu().tolist()
+
+
+def _safe_keep_k(C: int, prune_frac: float, min_ch: int = 8) -> int:
+    """
+    Compute how many channels to keep this round, from CURRENT size C.
+    - prune_frac is per-iteration fraction of REMAINING channels to drop (0..1).
+    - enforce a floor (min_ch) and never exceed C.
+    """
+    prune_frac = float(max(0.0, min(1.0, prune_frac)))
+    keep_k = int(round(C * (1.0 - prune_frac)))
+    keep_k = max(min_ch, keep_k)
+    keep_k = min(C, keep_k)
+    return keep_k
+
+def _safe_topk_keep_idx(scores: torch.Tensor, keep_k: int) -> torch.Tensor:
+    """
+    Robust top-k indices:
+    - replace non-finite scores with -inf (so they won't be chosen)
+    - if keep_k == C, keep all; if keep_k <= 0, keep all (safety)
+    - return sorted unique indices on the SAME device
+    """
+    C = scores.numel()
+    if keep_k >= C or keep_k <= 0:
+        return torch.arange(C, device=scores.device, dtype=torch.long)
+
+    s = scores
+    if not torch.isfinite(s).all():
+        s = s.clone()
+        s[~torch.isfinite(s)] = float("-inf")
+
+    # torch.topk handles ties; we sort indices to maintain order
+    vals, idx = torch.topk(s, k=keep_k, largest=True, sorted=False)
+    idx, _ = torch.sort(idx)
+    return idx
 
 def _l2_out_channel_importance(conv: nn.Conv2d) -> torch.Tensor:
     # [C_out, C_in, kH, kW] -> norm over (C_in,kH,kW) per out channel
@@ -616,10 +677,7 @@ def _l2_out_channel_importance(conv: nn.Conv2d) -> torch.Tensor:
         return torch.zeros(0, device=w.device)
     return w.view(oc, -1).norm(p=2, dim=1)
 
-def prune_encoder_structured_l2(model: nn.Module, encoder_ratio: float, example_inputs: torch.Tensor, round_to: int = 8):
-    """
-    encoder_ratio: single float applied to all blocks in layer2/3/4
-    """
+def prune_encoder_structured_l2(model: nn.Module, encoder_ratio: float, example_inputs: torch.Tensor, round_to: int = 8, min_ch: int = 16):
     if encoder_ratio <= 0.0:
         return model
 
@@ -633,19 +691,22 @@ def prune_encoder_structured_l2(model: nn.Module, encoder_ratio: float, example_
                 conv = getattr(block, "conv3", None) or getattr(block, "conv2", None)
                 if not isinstance(conv, nn.Conv2d):
                     continue
-                c_out = conv.out_channels
-                keep = _round_keep_channels(c_out, encoder_ratio, round_to=round_to)
-                pruned = c_out - keep
+                C = int(conv.out_channels)
+                keep = _safe_keep_k(C, prune_frac=encoder_ratio, min_ch=min_ch)
+                keep = int(math.ceil(keep / round_to) * round_to)  # keep channel alignment
+                keep = min(C, max(min_ch, keep))
+                pruned = C - keep
                 if pruned <= 0:
                     continue
 
                 w = conv.weight.detach()
-                score = w.view(c_out, -1).norm(p=2, dim=1)           # L2 importance
-                prune_idx = torch.argsort(score)[:pruned].tolist()   # prune least-important
+                score = w.view(C, -1).norm(p=2, dim=1)           # L2 importance
+                prune_idx = torch.argsort(score)[:pruned].tolist()
 
                 group = DG.get_pruning_group(conv, tp.prune_conv_out_channels, prune_idx)
                 group.exec()
     return model
+
 
 
 def run_prune_taylor_slim(cfg, dict_DB, group_ratios, suffix="", calib_batches=8):

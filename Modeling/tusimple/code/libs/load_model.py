@@ -13,7 +13,13 @@ def load_model_for_test(cfg, dict_DB):
         elif cfg.param_name == 'max':
             checkpoint = torch.load(cfg.dir['weight'] + f'checkpoint_max_acc_tusimple_res_{cfg.backbone}', map_location="cpu")
         elif cfg.param_name == 'multi':
-            checkpoint = torch.load(cfg.dir['weight'] + 'pruned/' + cfg.dir['current'], map_location="cpu", weights_only=False)
+            cand = cfg.dir.get('current', '')
+            # NEW: allow absolute file path
+            if os.path.isabs(cand) and os.path.exists(cand):
+                checkpoint = torch.load(cand, weights_only=False)
+            else:
+                # keep your previous behavior (e.g., from pruned/)
+                checkpoint = torch.load(cfg.dir['weight'] + 'pruned/' + cand, weights_only=False)
 
     # === Option A: if a full model object is present, use it ===
     if isinstance(checkpoint, dict) and "model_obj" in checkpoint:
@@ -88,6 +94,21 @@ def _normalize_val_result(v):
     else:
         return {'acc': 0.0}
 
+def load_model_from_checkpoint_for_prune(cfg, dict_DB, ckpt_path):
+    """Load a checkpoint (pruned/finetuned/anything) into dict_DB['model'] for pruning."""
+    if not os.path.exists(ckpt_path):
+        raise FileNotFoundError(ckpt_path)
+    ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+    if 'model_obj' in ckpt:
+        model = ckpt['model_obj']
+        # make sure cfg is attached (some pickles might not have it)
+        model.cfg = cfg
+    else:
+        model = Model(cfg=cfg)
+        model.load_state_dict(ckpt['model'], strict=False)
+    model = model.cuda().eval()
+    dict_DB['model'] = model
+    return dict_DB
 
 def _new_optimizer_and_sched(cfg, model):
     optimizer = torch.optim.Adam(params=model.parameters(),

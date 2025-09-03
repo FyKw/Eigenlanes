@@ -138,7 +138,7 @@ class Train_Process(object):
         os.makedirs(out_dir, exist_ok=True)
 
    #     fname_epoch = f"{base_tag}__ft_e{self.epoch:03d}.pt"
-        fname_latest = f"{base_tag}__ft_latest.pt"
+        fname_latest = f"{base_tag}__ft_latest"
     #    torch.save(ckpt, os.path.join(out_dir, fname_epoch))
         torch.save(ckpt, os.path.join(out_dir, fname_latest))
         print(f"💾 Saved finetuned: {os.path.join(out_dir, fname_latest)}")
